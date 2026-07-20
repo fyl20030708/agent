@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 from dotenv import load_dotenv
 
+from research_agent.llm import load_settings
 from research_agent.tools import REPO_ROOT, TOOL_REGISTRY
 
 load_dotenv()
@@ -82,34 +83,48 @@ def _dispatch(name: str, raw_args: str | dict) -> str:
     return str(fn(**args))
 
 
-def ask(question: str, max_rounds: int = 8) -> str:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        raise RuntimeError("Set OPENAI_API_KEY in .env")
-
-    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+def ask(question: str, max_rounds: int = 8, verbose: bool | None = None) -> str:
+    """Conversation turn loop. Each LLM call consumes one round (≈ IterationBudget)."""
+    settings = load_settings()
+    if verbose is None:
+        verbose = os.getenv("AGENT_VERBOSE", "0") in {"1", "true", "True"}
 
     messages: list[dict] = [
         {"role": "system", "content": SYSTEM},
         {"role": "user", "content": question},
     ]
 
-    with httpx.Client(base_url=base_url, headers={"Authorization": f"Bearer {api_key}"}, timeout=120) as client:
-        for _ in range(max_rounds):
+    with httpx.Client(
+        base_url=settings.base_url,
+        headers={"Authorization": f"Bearer {settings.api_key}"},
+        timeout=120,
+    ) as client:
+        for rounds_used in range(1, max_rounds + 1):
+            if verbose:
+                print(f"── round {rounds_used}/{max_rounds} ──")
+
             resp = client.post(
                 "/chat/completions",
-                json={"model": model, "messages": messages, "tools": TOOL_SCHEMAS},
+                json={
+                    "model": settings.model,
+                    "messages": messages,
+                    "tools": TOOL_SCHEMAS,
+                },
             )
             resp.raise_for_status()
             msg = resp.json()["choices"][0]["message"]
             messages.append(msg)
 
-            if not msg.get("tool_calls"):
+            tool_calls = msg.get("tool_calls")
+            if not tool_calls:
+                if verbose:
+                    print("  (final text)")
                 return msg.get("content") or ""
 
-            for call in msg["tool_calls"]:
+            for call in tool_calls:
                 fn = call["function"]
+                if verbose:
+                    print(f"  tool: {fn['name']}")
                 messages.append(
                     {
                         "role": "tool",
