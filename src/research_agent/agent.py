@@ -101,7 +101,7 @@ def ask(question: str, max_rounds: int = 8, verbose: bool | None = None) -> str:
     ) as client:
         for rounds_used in range(1, max_rounds + 1):
             if verbose:
-                print(f"── round {rounds_used}/{max_rounds} ──")
+                print(f"── round {rounds_used}/{max_rounds} (budget consume) ──")
 
             resp = client.post(
                 "/chat/completions",
@@ -124,7 +124,7 @@ def ask(question: str, max_rounds: int = 8, verbose: bool | None = None) -> str:
             for call in tool_calls:
                 fn = call["function"]
                 if verbose:
-                    print(f"  tool: {fn['name']}")
+                    print(f"  action/tool: {fn['name']}")
                 messages.append(
                     {
                         "role": "tool",
