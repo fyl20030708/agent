@@ -1,5 +1,9 @@
 # Agent 开发 12 周学习计划
 
+> **近 4 周执行顺序：** 以 [agent-learning-path-design](superpowers/specs/2026-07-20-agent-learning-path-design.md) 为准（能力地图：ReAct → 契约 → RAG → Eval）。本文件仍是 12 周总索引。
+>
+> **本周（Week 1）：** ReAct / conversation loop — `week02/react_loop.py` + 对照 `week01/tool_calling_demo.py`。
+
 ## 方向选择
 
 | 方向 | 场景 | 核心技术 |
