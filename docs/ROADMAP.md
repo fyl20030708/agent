@@ -14,12 +14,12 @@
 
 ## 阶段 0：前置基础（第 1–2 周）
 
-- Python 异步 `async/await`
+- [x] Python 异步 `async/await` — 见 `src/zero_week/async_agent_roadmap.py`
 - HTTP API（httpx）
 - Prompt Engineering：system prompt、JSON 结构化输出
 - 阅读 [ReAct 论文](https://arxiv.org/abs/2210.03629)
 
-**练习：** `week01/tool_calling_demo.py` — 3 个 function 的简单 bot。
+**练习：** `week01/tool_calling_demo.py` — DeepSeek + 3 个 function；中文问句读 `REPO_ROOT`。
 
 ---
 
@@ -72,7 +72,8 @@
 
 ## 里程碑检查表
 
-- [ ] Week 1：Tool Calling demo 跑通
+- [x] zero_week：async_agent_roadmap（await / gather / Semaphore / 迷你 loop）
+- [ ] Week 1：Tool Calling demo 跑通（DeepSeek + 31P_transformer）
 - [ ] Week 2：手写 ReAct loop
 - [ ] Week 4：research_agent v1 能读 31P_transformer 代码
 - [ ] Week 6：RAG 索引 + 10 条 eval
