@@ -81,12 +81,14 @@ def parse_action(text: str) -> tuple[str, dict] | None:
 
 
 def run_react(question: str, max_steps: int = 8) -> str:
+    """Text-ReAct loop. max_steps ≈ IterationBudget (one LLM call per step)."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise RuntimeError("Set OPENAI_API_KEY in .env")
+        raise RuntimeError("Set OPENAI_API_KEY in .env (DeepSeek / ECNU key is fine)")
 
-    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    base_url = os.getenv("OPENAI_BASE_URL", "https://api.deepseek.com/v1")
+    model = os.getenv("OPENAI_MODEL", "deepseek-chat")
+    print(f"[week02-react] model={model} base_url={base_url} repo={REPO_ROOT}")
 
     transcript = f"{REACT_PROMPT}\n\nQuestion: {question}\n"
 
@@ -127,5 +129,5 @@ def run_react(question: str, max_steps: int = 8) -> str:
 if __name__ == "__main__":
     import sys
 
-    q = " ".join(sys.argv[1:]) or "What training scripts exist under Training/?"
+    q = " ".join(sys.argv[1:]) or "Training 目录下有哪些训练相关脚本？用工具确认后再回答。"
     print(run_react(q))
