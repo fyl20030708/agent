@@ -111,12 +111,14 @@ def dispatch_tool(name: str, arguments: str | dict) -> str:
 
 
 def chat(user_message: str, max_rounds: int = 6) -> str:
+    """Tool-calling loop. max_rounds ≈ IterationBudget from async_agent_roadmap."""
     api_key = os.getenv("OPENAI_API_KEY")
     if not api_key:
-        raise RuntimeError("Set OPENAI_API_KEY in .env")
+        raise RuntimeError("Set OPENAI_API_KEY in .env (DeepSeek key is fine)")
 
-    base_url = os.getenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
-    model = os.getenv("OPENAI_MODEL", "gpt-4o-mini")
+    base_url = os.getenv("OPENAI_BASE_URL", "https://api.deepseek.com/v1")
+    model = os.getenv("OPENAI_MODEL", "deepseek-chat")
+    print(f"[week01] model={model} base_url={base_url} repo={REPO_ROOT}")
 
     messages: list[dict] = [
         {"role": "system", "content": SYSTEM_PROMPT},
@@ -154,5 +156,7 @@ def chat(user_message: str, max_rounds: int = 6) -> str:
 if __name__ == "__main__":
     import sys
 
-    question = " ".join(sys.argv[1:]) or "List Python files under Generation/"
+    question = " ".join(sys.argv[1:]) or (
+        "列出 Generation 目录下的 Python 文件，并读其中一个文件的前 30 行说明它是做什么的"
+    )
     print(chat(question))
