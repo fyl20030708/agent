@@ -1,5 +1,3 @@
-import os
-
 import pytest
 
 from research_agent.llm import ClientSettings, load_settings
