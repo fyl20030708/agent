@@ -100,6 +100,7 @@ def run_react(question: str, max_steps: int = 8) -> str:
                     "model": model,
                     "messages": [{"role": "user", "content": transcript + "Thought:"}],
                     "temperature": 0,
+                    "stop": ["\nObservation:"],
                 },
             )
             resp.raise_for_status()
@@ -119,7 +120,10 @@ def run_react(question: str, max_steps: int = 8) -> str:
             if fn is None:
                 obs = f"Unknown action: {name}"
             else:
-                obs = fn(**args)
+                try:
+                    obs = fn(**args)
+                except Exception as e:
+                    obs = f"error: {type(e).__name__}: {e}"
             transcript += f"\nObservation: {obs}\n"
             print(f"[step {step + 1}] {name}({args})")
 

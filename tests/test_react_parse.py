@@ -24,3 +24,19 @@ def test_parse_finish() -> None:
 
 def test_parse_invalid_returns_none() -> None:
     assert parse_action("Thought: I am confused\n") is None
+
+
+def test_parse_dirty_double_action_no_absurd_path() -> None:
+    """Two Action lines before Observation must not swallow a huge path."""
+    dirty = (
+        "Thought: a\n"
+        'Action: list_dir("Training")\n'
+        "Thought: b\n"
+        'Action: read_file("foo.py")\n'
+        "Observation: ok\n"
+    )
+    result = parse_action(dirty)
+    if result is not None:
+        _, args = result
+        path = args.get("path", args.get("answer", ""))
+        assert len(path) < 200
