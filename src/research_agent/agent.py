@@ -9,6 +9,7 @@ from typing import Any
 import httpx
 from dotenv import load_dotenv
 
+from research_agent.contracts import answer_has_repo_path
 from research_agent.llm import load_settings
 from research_agent.tools import REPO_ROOT, TOOL_REGISTRY
 
@@ -72,7 +73,8 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
 
 SYSTEM = f"""You are a research assistant for 31P MRS deep learning (Hybrid CNN-Transformer).
 Repo: {REPO_ROOT}
-Always use tools to verify facts from the codebase. Cite file paths in answers."""
+Always use tools to verify facts from the codebase. Cite file paths in answers.
+Final answers MUST cite at least one existing repo-relative file path (e.g. Training/train.py) that you verified with tools."""
 
 
 def _dispatch(name: str, raw_args: str | dict) -> str:
@@ -117,9 +119,24 @@ def ask(question: str, max_rounds: int = 8, verbose: bool | None = None) -> str:
 
             tool_calls = msg.get("tool_calls")
             if not tool_calls:
+                content = msg.get("content") or ""
+                if answer_has_repo_path(content):
+                    if verbose:
+                        print("  (final text, contract ok)")
+                    return content
+
                 if verbose:
-                    print("  (final text)")
-                return msg.get("content") or ""
+                    print("  (final text failed path contract; requesting repair)")
+                messages.append(
+                    {
+                        "role": "user",
+                        "content": (
+                            "Your answer did not cite any existing file path under the repo. "
+                            "Use tools if needed, then answer again and include a real relative path."
+                        ),
+                    }
+                )
+                continue
 
             for call in tool_calls:
                 fn = call["function"]
@@ -133,4 +150,4 @@ def ask(question: str, max_rounds: int = 8, verbose: bool | None = None) -> str:
                     }
                 )
 
-    return "Max tool rounds reached."
+    return "[contract-warning] Max tool rounds reached without a path-citing answer."
