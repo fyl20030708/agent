@@ -9,11 +9,17 @@ from research_agent.tools import REPO_ROOT
 
 # Paths like Training/train.py or foo/bar/baz.py
 _PATH_RE = re.compile(
-    r"(?P<path>(?:[A-Za-z0-9_.-]+/)+\S+?\.(?:py|md|txt|yaml|yml|json|sh))"
+    r"(?P<path>(?:[A-Za-z0-9_.-]+/)+\S+?\.(?:py|md|txt|yaml|yml|json|sh)(?![A-Za-z0-9_]))"
 )
 
 
 def extract_cited_paths(answer: str) -> list[str]:
+    """Extract repo-relative file paths cited in *answer*.
+
+    Matches paths with at least one directory segment and a known extension
+    (e.g. ``Training/train.py``). Bare filenames like ``train.py`` are not
+    matched.
+    """
     found = [m.group("path").rstrip(".,);:]") for m in _PATH_RE.finditer(answer or "")]
     # de-dupe, keep order
     out: list[str] = []

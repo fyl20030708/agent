@@ -25,3 +25,13 @@ def test_answer_has_repo_path_true_when_file_exists() -> None:
 
 def test_answer_has_repo_path_false_for_hallucinated() -> None:
     assert answer_has_repo_path("See Not/A/Real/Path/zzz.py", REPO_ROOT) is False
+
+
+def test_extract_cited_paths_does_not_truncate_pyc_to_py() -> None:
+    text = "Training/train.pyc"
+    paths = extract_cited_paths(text)
+    assert "Training/train.py" not in paths
+
+
+def test_answer_has_repo_path_false_for_pyc_only_mention() -> None:
+    assert answer_has_repo_path("Training/train.pyc", REPO_ROOT) is False
