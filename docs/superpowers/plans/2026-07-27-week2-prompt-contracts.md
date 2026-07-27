@@ -102,11 +102,15 @@ def test_extract_plain_json() -> None:
 
 
 def test_extract_json_from_fenced_block() -> None:
-    text = """Here you go:
-```json
-{"path": "a.py", "summary": "x", "confidence": 0.5}
-```
-"""
+    fence = chr(96) * 3  # backtick * 3
+    text = (
+        "Here you go:\n"
+        + fence
+        + "json\n"
+        + '{"path": "a.py", "summary": "x", "confidence": 0.5}\n'
+        + fence
+        + "\n"
+    )
     obj = extract_json_object(text)
     assert obj is not None
     assert obj["path"] == "a.py"
