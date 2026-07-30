@@ -99,7 +99,10 @@ def _dispatch(name: str, raw_args: str | dict) -> str:
     if fn is None:
         return f"Unknown tool: {name}"
     args = json.loads(raw_args) if isinstance(raw_args, str) else raw_args
-    return str(fn(**args))
+    try:
+        return str(fn(**args))
+    except Exception as exc:
+        return f"error: {type(exc).__name__}: {exc}"
 
 
 def ask(question: str, max_rounds: int = 8, verbose: bool | None = None) -> str:
