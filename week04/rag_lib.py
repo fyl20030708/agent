@@ -36,6 +36,11 @@ def _split_by_headings(text: str) -> list[tuple[str, str]]:
         return []
 
     sections: list[tuple[str, str]] = []
+
+    preamble = text[: matches[0].start()].strip()
+    if preamble:
+        sections.append(("", preamble))
+
     for index, match in enumerate(matches):
         heading = match.group(2).strip()
         start = match.end()
@@ -71,7 +76,9 @@ def _window_chunks(text: str, source_path: str, mtime: float) -> list[dict[str, 
 
 
 def cosine(a: list[float], b: list[float]) -> float:
-    dot = sum(x * y for x, y in zip(a, b, strict=False))
+    if len(a) != len(b):
+        raise ValueError(f"vectors must have equal length: {len(a)} != {len(b)}")
+    dot = sum(x * y for x, y in zip(a, b))
     norm_a = sum(x * x for x in a) ** 0.5
     norm_b = sum(x * x for x in b) ** 0.5
     if norm_a == 0.0 or norm_b == 0.0:
