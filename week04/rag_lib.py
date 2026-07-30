@@ -195,6 +195,22 @@ def build_index(
     return index
 
 
+def search(
+    query: str,
+    index: list[dict[str, Any]],
+    k: int = 5,
+    embed_fn: Callable[[list[str]], list[list[float]]] = embed_texts,
+) -> list[dict[str, Any]]:
+    if not index or k <= 0:
+        return []
+    query_vector = embed_fn([query])[0]
+    scored = [
+        {**record, "score": cosine(query_vector, record["vector"])}
+        for record in index
+    ]
+    return sorted(scored, key=lambda record: record["score"], reverse=True)[:k]
+
+
 def _discover_markdown(repo_root: Path) -> list[Path]:
     markdown_files: list[Path] = []
     for directory, subdirectories, filenames in os.walk(repo_root):

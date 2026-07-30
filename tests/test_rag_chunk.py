@@ -168,3 +168,21 @@ def test_build_index_reuses_unchanged_vectors_and_embeds_changed_markdown_only(
         for record in third_index
         if record["path"] == "unchanged.md"
     ) == unchanged_vector
+
+
+def test_search_returns_top_k_in_descending_cosine_order() -> None:
+    index = [
+        {"path": "low.md", "heading": "Low", "text": "low", "vector": [0.0, 1.0]},
+        {"path": "high.md", "heading": "High", "text": "high", "vector": [1.0, 0.0]},
+        {"path": "middle.md", "heading": "Middle", "text": "middle", "vector": [1.0, 1.0]},
+    ]
+
+    results = rag_lib.search(
+        "query",
+        index,
+        k=2,
+        embed_fn=lambda texts: [[1.0, 0.0]],
+    )
+
+    assert [result["path"] for result in results] == ["high.md", "middle.md"]
+    assert results[0]["score"] > results[1]["score"]
