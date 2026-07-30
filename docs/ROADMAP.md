@@ -2,7 +2,9 @@
 
 > **近 4 周执行顺序：** 以 [agent-learning-path-design](superpowers/specs/2026-07-20-agent-learning-path-design.md) 为准（能力地图：ReAct → 契约 → RAG → Eval）。本文件仍是 12 周总索引。
 >
-> **本周（Week 2）：** Prompt 契约 + 结构化输出 — `week03/structured_output_demo.py` → 迁入 `research_agent` 路径引用校验。
+> **本周（Week 3）：** Minimal RAG — `week04/rag_demo.py` → 迁入 `research_agent` 的 `search_docs`。
+>
+> **已完成（Week 2）：** Prompt 契约 + 结构化输出 — `week03/structured_output_demo.py` → `research_agent` 路径引用校验。
 >
 > **已完成（Week 1）：** ReAct / conversation loop — `week02/` + `week01/tool_calling_demo.py`。
 

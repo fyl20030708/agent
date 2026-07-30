@@ -9,3 +9,6 @@ venv/
 *.log
 .chroma/
 data/index/
+src/agent_learning.egg-info
+week04/.rag_cache.json
+*.rag_cache.json
