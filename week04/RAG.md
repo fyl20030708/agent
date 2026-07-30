@@ -102,7 +102,7 @@ RAG 同一规则：
 
 ## 常用命令
 
-在仓库根目录执行（`rag_demo.py` 会 `import rag_lib`，cwd 需在 `week04/` 或把该目录加入 `PYTHONPATH`）：
+以下命令在 **`week04/` 目录下**执行（`rag_demo.py` 通过 `import rag_lib` 加载同目录模块；等价做法：在仓库根目录设 `PYTHONPATH=week04` 后运行 `python week04/rag_demo.py …`）：
 
 ```bash
 cd week04
