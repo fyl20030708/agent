@@ -233,8 +233,8 @@ def build_index(
             if not chunks:
                 continue
             vectors = embed_fn([chunk["text"] for chunk in chunks])
-            embedded_any_file = True
             index.extend(_pair_chunks_with_vectors(chunks, vectors))
+            embedded_any_file = True
     except Exception:
         # Only persist on failure if this run made real, keepable progress
         # (a file finished embedding, or stale cached files were dropped).
