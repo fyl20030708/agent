@@ -5,6 +5,8 @@ from __future__ import annotations
 import os
 from pathlib import Path
 
+from research_agent.rag import search_docs
+
 REPO_ROOT = Path(os.getenv("REPO_ROOT", "/homes/yli/31P_transformer"))
 
 
@@ -65,4 +67,5 @@ TOOL_REGISTRY = {
     "read_file": read_file,
     "list_experiment_dirs": list_experiment_dirs,
     "grep_repo": grep_repo,
+    "search_docs": search_docs,
 }

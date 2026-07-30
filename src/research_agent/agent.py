@@ -69,11 +69,28 @@ TOOL_SCHEMAS: list[dict[str, Any]] = [
             },
         },
     },
+    {
+        "type": "function",
+        "function": {
+            "name": "search_docs",
+            "description": "Search Markdown documentation for conceptual or design information.",
+            "parameters": {
+                "type": "object",
+                "properties": {
+                    "query": {"type": "string"},
+                    "k": {"type": "integer", "default": 5},
+                },
+                "required": ["query"],
+            },
+        },
+    },
 ]
 
 SYSTEM = f"""You are a research assistant for 31P MRS deep learning (Hybrid CNN-Transformer).
 Repo: {REPO_ROOT}
 Always use tools to verify facts from the codebase. Cite file paths in answers.
+Use search_docs for concepts and design questions from documentation.
+Use read_file for exact file contents and grep_repo for exact symbols or strings in Python.
 Final answers MUST cite at least one existing repo-relative file path (e.g. Training/train.py) that you verified with tools."""
 
 
