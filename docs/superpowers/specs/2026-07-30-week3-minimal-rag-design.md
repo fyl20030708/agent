@@ -1,7 +1,7 @@
 # Week 3 Minimal RAG Design
 
 **Date:** 2026-07-30  
-**Status:** Draft (awaiting user review)  
+**Status:** Approved  
 **Parent:** [agent-learning-path-design](2026-07-20-agent-learning-path-design.md) — Week 3 block  
 **Audience:** Same learner track (demo → migrate into `research_agent`)
 
