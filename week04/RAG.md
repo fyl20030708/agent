@@ -30,7 +30,6 @@ REPO_ROOT/**/*.md
 | 概念 / 设计 / “X 是怎么工作的” | **`search_docs`** | 跨多篇 `.md` 的语义相似度；不必先知道文件名 |
 | 某文件的**确切**内容、行级核对 | **`read_file`** | 全文或指定片段；无 embedding 近似误差 |
 | 代码里**精确**符号、字符串、函数名 | **`grep_repo`** | 正则/字面匹配 `.py`；RAG 本周只索引 `*.md` |
-| 目录结构、文件是否存在 | **`list_dir`** | 与 RAG 无关的导航 |
 
 **一句话：** RAG 帮你**找相关段落**；`read_file` 帮你**读对文件**；`grep_repo` 帮你**定位符号**。
 
@@ -59,11 +58,11 @@ REPO_ROOT/**/*.md
 }
 ```
 
-顶层还有 `chunk_version`（当前 `1`）。版本 bump 时整库重 embed。
+顶层还有 `chunk_version`（当前 `2`）、`embed_model`（构建索引时用的 `OPENAI_EMBED_MODEL`）、`vector_dim`（向量维度，仅供参考）。三者任一与本次运行不一致都会触发**整库重 embed**（含旧版本缓存——没有 `embed_model` 字段本身就会被判定为不匹配，安全回退到全量重建）。
 
-**mtime 失效：** `build_index` 对每个 `.md` 比较磁盘 `st_mtime` 与缓存里该 path 的 `mtime`。相同 → 复用该文件全部 chunk+vector；不同 → 重新 chunk 并 embed。**编辑文档后**下次运行会自动更新对应文件，无需手删 cache（除非 chunk 算法/`chunk_version` 变了）。
+**mtime 失效：** `build_index` 对每个 `.md` 比较磁盘 `st_mtime` 与缓存里该 path 的 `mtime`。相同 → 复用该文件全部 chunk+vector；不同 → 重新 chunk 并 embed。**编辑文档后**下次运行会自动更新对应文件，无需手删 cache（除非 chunk 算法/`chunk_version`/`embed_model` 变了）。若某次运行中途 embed 失败，已成功处理的文件仍会被写入缓存，下次重跑只需重试失败的文件。
 
-**为何 gitignore：** 向量体积大、随本地语料变化、可本地重建；提交会污染 diff 且可能泄露语料快照。
+**为何 gitignore：** 向量体积大（可达数十 MB）、随本地语料变化、可本地重建；提交会污染 diff 且可能泄露语料快照。**性能提示：** 只要没有文件新增/删除、chunk 算法版本、`embed_model` 都未变化，`build_index` 不会重写这份缓存文件；`research_agent.rag` 还会在进程内缓存索引，同一进程内重复调用 `search_docs` 不会重复读盘或重新构建索引（见 `clear_index_cache()`）。
 
 ## 环境变量
 
@@ -102,20 +101,20 @@ RAG 同一规则：
 
 ## 常用命令
 
-以下命令在 **`week04/` 目录下**执行（`rag_demo.py` 通过 `import rag_lib` 加载同目录模块；等价做法：在仓库根目录设 `PYTHONPATH=week04` 后运行 `python week04/rag_demo.py …`）：
+推荐**在仓库根目录**执行（Python 会把 `rag_demo.py` 所在目录自动加入 `sys.path`，所以 `import rag_lib` 不依赖当前工作目录）：
 
 ```bash
-cd week04
-
 # 首次运行：discover → chunk → embed → 写 cache；打印 top-k + LLM 答案
-python rag_demo.py "How is magnitude training configured?"
+python week04/rag_demo.py "How is magnitude training configured?"
 
 # 只检索，不调 chat（看 score 与 path#heading）
-python rag_demo.py "How is magnitude training configured?" --search-only
+python week04/rag_demo.py "How is magnitude training configured?" --search-only
 
 # 改 top-k（默认 5）
-python rag_demo.py "magnitude training strategy" -k 3 --search-only
+python week04/rag_demo.py "magnitude training strategy" -k 3 --search-only
 ```
+
+等价做法：`cd week04 && python rag_demo.py "…"`。两种方式都可以，缓存路径（`week04/.rag_cache.json`）与 cwd 无关。
 
 **第二次**对同一语料运行：日志应出现 `[week04] reused document cache`，不再 bulk embed。
 

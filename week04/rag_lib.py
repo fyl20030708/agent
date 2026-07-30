@@ -17,9 +17,20 @@ load_dotenv()
 HEADING_PATTERN = re.compile(r"^(#{1,3})\s+(.+)$", re.MULTILINE)
 MAX_CHUNK_CHARS = 800
 OVERLAP_CHARS = 100
-CHUNK_VERSION = 1
+# Bumped from 1: cache payload gained top-level `embed_model` / `vector_dim`
+# keys (see save_cache/load_cache). Old caches lack those keys, which already
+# forces a safe rebuild on its own (mismatched embed_model), but the version
+# bump makes the schema change explicit.
+CHUNK_VERSION = 2
+DEFAULT_EMBED_MODEL = "ecnu-embedding-small"
+# Named cap on how many inputs go into a single /embeddings HTTP request.
+EMBED_BATCH_SIZE = 64
 CACHE_PATH = Path(__file__).with_name(".rag_cache.json")
 SKIPPED_DIRECTORIES = {".git", ".pytest_cache", "node_modules"}
+
+
+def _current_embed_model() -> str:
+    return os.getenv("OPENAI_EMBED_MODEL", DEFAULT_EMBED_MODEL)
 
 
 def chunk_markdown(text: str, source_path: str, mtime: float) -> list[dict[str, Any]]:
@@ -30,14 +41,19 @@ def chunk_markdown(text: str, source_path: str, mtime: float) -> list[dict[str, 
             body = body.strip()
             if not body:
                 continue
-            chunks.append(
-                {
-                    "path": source_path,
-                    "heading": heading,
-                    "text": body,
-                    "mtime": mtime,
-                }
-            )
+            if len(body) <= MAX_CHUNK_CHARS:
+                chunks.append(
+                    {
+                        "path": source_path,
+                        "heading": heading,
+                        "text": body,
+                        "mtime": mtime,
+                    }
+                )
+            else:
+                chunks.extend(
+                    _window_chunks(body, source_path, mtime, heading=heading)
+                )
         return chunks
     return _window_chunks(text, source_path, mtime)
 
@@ -61,7 +77,9 @@ def _split_by_headings(text: str) -> list[tuple[str, str]]:
     return sections
 
 
-def _window_chunks(text: str, source_path: str, mtime: float) -> list[dict[str, Any]]:
+def _window_chunks(
+    text: str, source_path: str, mtime: float, heading: str = ""
+) -> list[dict[str, Any]]:
     text = text.strip()
     if not text:
         return []
@@ -76,7 +94,7 @@ def _window_chunks(text: str, source_path: str, mtime: float) -> list[dict[str, 
             chunks.append(
                 {
                     "path": source_path,
-                    "heading": "",
+                    "heading": heading,
                     "text": chunk_text,
                     "mtime": mtime,
                 }
@@ -98,7 +116,9 @@ def cosine(a: list[float], b: list[float]) -> float:
     return dot / (norm_a * norm_b)
 
 
-def embed_texts(texts: list[str]) -> list[list[float]]:
+def embed_texts(
+    texts: list[str], batch_size: int = EMBED_BATCH_SIZE
+) -> list[list[float]]:
     if not texts:
         return []
 
@@ -106,22 +126,25 @@ def embed_texts(texts: list[str]) -> list[list[float]]:
     if not api_key:
         raise RuntimeError("Set OPENAI_API_KEY in .env")
     base_url = os.getenv("OPENAI_BASE_URL", "https://api.deepseek.com/v1")
-    model = os.getenv("OPENAI_EMBED_MODEL", "ecnu-embedding-small")
+    model = _current_embed_model()
 
+    vectors: list[list[float]] = []
     with httpx.Client(
         base_url=base_url,
         headers={"Authorization": f"Bearer {api_key}"},
         timeout=120,
     ) as client:
-        response = client.post(
-            "/embeddings",
-            json={"model": model, "input": texts},
-        )
-        response.raise_for_status()
-
-    data = response.json()["data"]
-    ordered = sorted(data, key=lambda item: item["index"])
-    return [item["embedding"] for item in ordered]
+        for start in range(0, len(texts), batch_size):
+            batch = texts[start : start + batch_size]
+            response = client.post(
+                "/embeddings",
+                json={"model": model, "input": batch},
+            )
+            response.raise_for_status()
+            data = response.json()["data"]
+            ordered = sorted(data, key=lambda item: item["index"])
+            vectors.extend(item["embedding"] for item in ordered)
+    return vectors
 
 
 def load_cache(path: str | Path) -> dict[str, Any]:
@@ -132,10 +155,21 @@ def load_cache(path: str | Path) -> dict[str, Any]:
         return json.load(cache_file)
 
 
-def save_cache(path: str | Path, records: list[dict[str, Any]]) -> None:
+def save_cache(
+    path: str | Path,
+    records: list[dict[str, Any]],
+    *,
+    embed_model: str | None = None,
+    vector_dim: int | None = None,
+) -> None:
     cache_path = Path(path)
     cache_path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"chunk_version": CHUNK_VERSION, "records": records}
+    payload = {
+        "chunk_version": CHUNK_VERSION,
+        "embed_model": embed_model,
+        "vector_dim": vector_dim,
+        "records": records,
+    }
     with cache_path.open("w", encoding="utf-8") as cache_file:
         json.dump(payload, cache_file, ensure_ascii=False, indent=2)
 
@@ -147,26 +181,31 @@ def needs_reembed(cached_mtime: float, current_mtime: float) -> bool:
 def build_index(
     repo_root: str | Path,
     embed_fn: Callable[[list[str]], list[list[float]]] = embed_texts,
+    embed_model: str | None = None,
 ) -> list[dict[str, Any]]:
     root = Path(repo_root)
+    model = embed_model or _current_embed_model()
     cache = load_cache(CACHE_PATH)
-    cached_records = (
-        cache.get("records", [])
-        if cache.get("chunk_version") == CHUNK_VERSION
-        else []
+    cache_existed = CACHE_PATH.exists()
+    cache_matches_schema = (
+        cache.get("chunk_version") == CHUNK_VERSION
+        and cache.get("embed_model") == model
     )
+    cached_records = cache.get("records", []) if cache_matches_schema else []
     cached_by_path: dict[str, list[dict[str, Any]]] = {}
     for record in cached_records:
         cached_by_path.setdefault(record["path"], []).append(record)
 
-    file_chunks: list[tuple[bool, list[dict[str, Any]]]] = []
-    chunks_to_embed: list[dict[str, Any]] = []
+    discovered_paths: set[str] = set()
+    index: list[dict[str, Any]] = []
+    pending_files: list[tuple[str, list[dict[str, Any]]]] = []
     for markdown_path in _discover_markdown(root):
         relative_path = markdown_path.relative_to(root).as_posix()
+        discovered_paths.add(relative_path)
         mtime = markdown_path.stat().st_mtime
         cached = cached_by_path.get(relative_path, [])
         if cached and not needs_reembed(cached[0]["mtime"], mtime):
-            file_chunks.append((True, cached))
+            index.extend(cached)
             continue
 
         chunks = chunk_markdown(
@@ -174,24 +213,37 @@ def build_index(
             relative_path,
             mtime,
         )
-        file_chunks.append((False, chunks))
-        chunks_to_embed.extend(chunks)
+        pending_files.append((relative_path, chunks))
 
-    embedded_vectors = (
-        embed_fn([chunk["text"] for chunk in chunks_to_embed])
-        if chunks_to_embed
-        else []
-    )
-    vectors = iter(embedded_vectors)
-    index: list[dict[str, Any]] = []
-    for reused, chunks in file_chunks:
-        if reused:
-            index.extend(chunks)
-            continue
-        for chunk in chunks:
-            index.append({**chunk, "vector": next(vectors)})
+    files_removed = bool(set(cached_by_path) - discovered_paths)
+    embedded_any_file = False
 
-    save_cache(CACHE_PATH, index)
+    try:
+        for _relative_path, chunks in pending_files:
+            if not chunks:
+                continue
+            vectors = embed_fn([chunk["text"] for chunk in chunks])
+            embedded_any_file = True
+            for chunk, vector in zip(chunks, vectors):
+                index.append({**chunk, "vector": vector})
+    finally:
+        # Persist whatever succeeded so far — even on failure — so a retry
+        # does not have to re-embed files that already completed this run.
+        needs_save = (
+            embedded_any_file
+            or files_removed
+            or not cache_matches_schema
+            or not cache_existed
+        )
+        if needs_save:
+            if index:
+                vector_dim = len(index[0]["vector"])
+            elif cache_matches_schema:
+                vector_dim = cache.get("vector_dim")
+            else:
+                vector_dim = None
+            save_cache(CACHE_PATH, index, embed_model=model, vector_dim=vector_dim)
+
     return index
 
 

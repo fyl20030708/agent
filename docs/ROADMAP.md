@@ -83,9 +83,9 @@
 > **Week 1 验收状态（2026-07-20）：** Tasks 1–4 代码已合并；Phase 1（`week01/tool_calling_demo.py`）与 Phase 2（`research_agent` CLI）的 live DeepSeek 验收待 `.env` 配置 `OPENAI_API_KEY`。
 
 - [x] zero_week：async_agent_roadmap（await / gather / Semaphore / 迷你 loop）
-- [ ] Week 1：Tool Calling demo 跑通（DeepSeek + 31P_transformer）
+- [x] Week 1：Tool Calling demo 跑通（DeepSeek + 31P_transformer）
 - [ ] research_agent CLI 能用工具定位 HybridTransformer（Phase 2 验收）
-- [ ] Week 2：手写 ReAct loop
+- [x] Week 2：手写 ReAct loop
 - [ ] Week 4：research_agent v1 能读 31P_transformer 代码
 - [ ] Week 6：RAG 索引 + 10 条 eval
 - [ ] Week 8：MCP server 暴露实验工具
