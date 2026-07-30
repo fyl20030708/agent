@@ -179,11 +179,14 @@ def needs_reembed(cached_mtime: float, current_mtime: float) -> bool:
 
 
 def _pair_chunks_with_vectors(
-    chunks: list[dict[str, Any]], vectors: list[list[float]]
+    chunks: list[dict[str, Any]], vectors: list[list[float]], source_path: str
 ) -> list[dict[str, Any]]:
     if len(vectors) != len(chunks):
         raise ValueError(
-            f"vector count mismatch: expected {len(chunks)}, got {len(vectors)}"
+            f"embed_fn returned {len(vectors)} vector(s) for {len(chunks)} "
+            f"chunk(s) from {source_path!r}; expected exactly one vector per "
+            "chunk — refusing to persist an inconsistent/incomplete index "
+            "for this source"
         )
     return [{**chunk, "vector": vector} for chunk, vector in zip(chunks, vectors)]
 
@@ -233,7 +236,7 @@ def build_index(
             if not chunks:
                 continue
             vectors = embed_fn([chunk["text"] for chunk in chunks])
-            index.extend(_pair_chunks_with_vectors(chunks, vectors))
+            index.extend(_pair_chunks_with_vectors(chunks, vectors, relative_path))
             embedded_any_file = True
     except Exception:
         # Only persist on failure if this run made real, keepable progress
@@ -248,7 +251,12 @@ def build_index(
 
     # Persist whatever succeeded so far so a retry does not have to re-embed
     # files that already completed this run.
-    needs_save = embedded_any_file or files_removed
+    needs_save = (
+        embedded_any_file
+        or files_removed
+        or not cache_matches_schema
+        or not cache_existed
+    )
     if needs_save:
         if index:
             vector_dim = len(index[0]["vector"])
