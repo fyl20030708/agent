@@ -178,6 +178,16 @@ def needs_reembed(cached_mtime: float, current_mtime: float) -> bool:
     return cached_mtime != current_mtime
 
 
+def _pair_chunks_with_vectors(
+    chunks: list[dict[str, Any]], vectors: list[list[float]]
+) -> list[dict[str, Any]]:
+    if len(vectors) != len(chunks):
+        raise ValueError(
+            f"vector count mismatch: expected {len(chunks)}, got {len(vectors)}"
+        )
+    return [{**chunk, "vector": vector} for chunk, vector in zip(chunks, vectors)]
+
+
 def build_index(
     repo_root: str | Path,
     embed_fn: Callable[[list[str]], list[list[float]]] = embed_texts,
@@ -219,30 +229,34 @@ def build_index(
     embedded_any_file = False
 
     try:
-        for _relative_path, chunks in pending_files:
+        for relative_path, chunks in pending_files:
             if not chunks:
                 continue
             vectors = embed_fn([chunk["text"] for chunk in chunks])
             embedded_any_file = True
-            for chunk, vector in zip(chunks, vectors):
-                index.append({**chunk, "vector": vector})
-    finally:
-        # Persist whatever succeeded so far — even on failure — so a retry
-        # does not have to re-embed files that already completed this run.
-        needs_save = (
-            embedded_any_file
-            or files_removed
-            or not cache_matches_schema
-            or not cache_existed
-        )
-        if needs_save:
-            if index:
-                vector_dim = len(index[0]["vector"])
-            elif cache_matches_schema:
-                vector_dim = cache.get("vector_dim")
-            else:
-                vector_dim = None
+            index.extend(_pair_chunks_with_vectors(chunks, vectors))
+    except Exception:
+        # Only persist on failure if this run made real, keepable progress
+        # (a file finished embedding, or stale cached files were dropped).
+        # Otherwise leave any existing cache file completely untouched —
+        # e.g. a legacy/schema-mismatched cache must not be replaced by an
+        # empty v2 payload just because the very first embed call failed.
+        if embedded_any_file or files_removed:
+            vector_dim = len(index[0]["vector"]) if index else None
             save_cache(CACHE_PATH, index, embed_model=model, vector_dim=vector_dim)
+        raise
+
+    # Persist whatever succeeded so far so a retry does not have to re-embed
+    # files that already completed this run.
+    needs_save = embedded_any_file or files_removed
+    if needs_save:
+        if index:
+            vector_dim = len(index[0]["vector"])
+        elif cache_matches_schema:
+            vector_dim = cache.get("vector_dim")
+        else:
+            vector_dim = None
+        save_cache(CACHE_PATH, index, embed_model=model, vector_dim=vector_dim)
 
     return index
 

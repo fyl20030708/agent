@@ -311,6 +311,109 @@ def test_build_index_persists_progress_when_embed_fails_partway(
     assert {record["path"] for record in second_index} == {"a.md", "b.md"}
 
 
+def test_build_index_preserves_legacy_cache_when_rebuild_fails_with_zero_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A schema-mismatched (e.g. pre-embed-model-field) cache still holding
+    real records must survive a rebuild attempt that fails before any file is
+    successfully (re-)embedded — it must not be replaced by an empty v2 payload."""
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "doc.md").write_text("# S\nBody text.\n", encoding="utf-8")
+    cache_path = tmp_path / "cache.json"
+    monkeypatch.setattr(rag_lib, "CACHE_PATH", cache_path)
+
+    legacy_payload = {
+        "chunk_version": rag_lib.CHUNK_VERSION,
+        "records": [
+            {
+                "path": "doc.md",
+                "heading": "S",
+                "text": "Old body text.",
+                "mtime": 1.0,
+                "vector": [9.0, 9.0],
+            }
+        ],
+    }
+    cache_path.write_text(json.dumps(legacy_payload), encoding="utf-8")
+    original_bytes = cache_path.read_bytes()
+
+    def failing_embed(texts: list[str]) -> list[list[float]]:
+        raise RuntimeError("simulated network failure")
+
+    with pytest.raises(RuntimeError, match="simulated network failure"):
+        rag_lib.build_index(repo_root, embed_fn=failing_embed, embed_model="model-a")
+
+    assert cache_path.read_bytes() == original_bytes, (
+        "a failed rebuild with zero progress must not overwrite the legacy "
+        "cache with an empty v2 payload"
+    )
+
+
+def test_build_index_preserves_cache_when_rebuild_fails_and_no_cache_existed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Symmetric case: if there was no cache file at all, a zero-progress
+    failure must not create an empty one either."""
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "doc.md").write_text("# S\nBody text.\n", encoding="utf-8")
+    cache_path = tmp_path / "cache.json"
+    monkeypatch.setattr(rag_lib, "CACHE_PATH", cache_path)
+
+    def failing_embed(texts: list[str]) -> list[list[float]]:
+        raise RuntimeError("simulated network failure")
+
+    with pytest.raises(RuntimeError, match="simulated network failure"):
+        rag_lib.build_index(repo_root, embed_fn=failing_embed, embed_model="model-a")
+
+    assert not cache_path.exists()
+
+
+def test_build_index_raises_value_error_when_embed_fn_returns_wrong_vector_count(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "bad.md").write_text(
+        "# Bad\nFirst para.\n\n## Second\nSecond para.\n", encoding="utf-8"
+    )
+    cache_path = tmp_path / "cache.json"
+    monkeypatch.setattr(rag_lib, "CACHE_PATH", cache_path)
+
+    def short_embed(texts: list[str]) -> list[list[float]]:
+        return [[1.0, 0.0]]  # only 1 vector for 2 requested chunks
+
+    with pytest.raises(ValueError, match="vector"):
+        rag_lib.build_index(repo_root, embed_fn=short_embed, embed_model="model-a")
+
+    assert not cache_path.exists(), "an inconsistent/incomplete source must not be persisted"
+
+
+def test_build_index_excludes_inconsistent_file_but_keeps_other_files_progress(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / "a.md").write_text("# A\nAlpha body.\n", encoding="utf-8")
+    (repo_root / "b.md").write_text("# B\nBeta body.\n", encoding="utf-8")
+    cache_path = tmp_path / "cache.json"
+    monkeypatch.setattr(rag_lib, "CACHE_PATH", cache_path)
+
+    def flaky_embed(texts: list[str]) -> list[list[float]]:
+        if texts == ["Beta body."]:
+            return [[1.0], [2.0]]  # wrong count: 2 vectors for 1 chunk
+        return [[1.0, 0.0] for _ in texts]
+
+    with pytest.raises(ValueError, match="vector"):
+        rag_lib.build_index(repo_root, embed_fn=flaky_embed, embed_model="model-a")
+
+    cache = rag_lib.load_cache(cache_path)
+    assert {record["path"] for record in cache["records"]} == {"a.md"}, (
+        "the inconsistent file (b.md) must be excluded, but a.md's progress kept"
+    )
+
+
 def test_embed_texts_batches_requests_and_preserves_response_order(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

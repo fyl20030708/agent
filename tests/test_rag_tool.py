@@ -11,6 +11,16 @@ from research_agent import rag
 from research_agent.agent import _dispatch
 
 
+@pytest.fixture(autouse=True)
+def _reset_rag_index_cache():
+    """Prevent the in-process memoized index (`rag._INDEX_CACHE`) from leaking
+    a fake/sentinel value set by one test into a later test that expects a
+    real build."""
+    rag.clear_index_cache()
+    yield
+    rag.clear_index_cache()
+
+
 def test_search_docs_formats_injected_retrieval_results(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
