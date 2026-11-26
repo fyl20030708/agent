@@ -1,0 +1,227 @@
+"""情绪版回复纸条：MacBERT 判断，选中的模型只负责说。"""
+
+import sys
+from datetime import datetime, timedelta, timezone
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1] / "plugins" / "astrbot_plugin_dafeiyu_emotion"
+sys.path.insert(0, str(ROOT))
+
+from emotion.engine import EmotionScore, Engine
+from emotion.inject import attach_instruction
+
+T0 = datetime(2026, 11, 26, 12, 0, tzinfo=timezone.utc)
+
+
+class Scripted:
+    def __init__(self, score: EmotionScore) -> None:
+        self.score = score
+        self.calls = 0
+
+    def predict(self, text: str) -> EmotionScore:
+        self.calls += 1
+        return self.score
+
+
+def engine(score: EmotionScore) -> tuple[Engine, Scripted]:
+    clf = Scripted(score)
+    return Engine(clf), clf
+
+
+def score(**probs: float) -> EmotionScore:
+    return EmotionScore.from_probs(probs)
+
+
+def test_happy_slip_keeps_the_chat_and_does_not_ask() -> None:
+    bot, _ = engine(score(happy=0.91, neutral=0.09))
+    slip = bot.handle("s", "今天阳光很好", T0)
+    assert slip.action_state == "pleasant"
+    assert slip.call_model is True
+    assert slip.ask is False
+    assert "不要问" in slip.instruction
+    assert "不要改判" in slip.instruction
+
+
+def test_sad_slip_asks_the_fixed_question_and_waits() -> None:
+    bot, _ = engine(score(sad=0.86, neutral=0.14))
+    slip = bot.handle("s", "答辩完了，什么都不想做", T0)
+    assert slip.action_state == "low"
+    assert slip.ask is True
+    assert slip.call_model is True
+    assert "这几句听起来有点沉，是遇到事了，还是我多想了？" in slip.instruction
+    assert "接住" in slip.instruction
+    assert "不要讲故事" in slip.instruction
+    assert "不要改判" in slip.instruction
+
+
+def test_low_confidence_sadness_does_not_ask() -> None:
+    bot, _ = engine(score(sad=0.62, neutral=0.38))
+    slip = bot.handle("s", "有一点闷", T0)
+    assert slip.action_state == "low"
+    assert slip.ask is False
+    assert "不要问" in slip.instruction
+
+
+def test_stress_slip_does_not_offer_a_story() -> None:
+    bot, _ = engine(score(sad=0.58, angry=0.22, neutral=0.20))
+    slip = bot.handle("s", "最近压力好大，睡不着", T0)
+    assert slip.action_state == "stressed"
+    assert slip.ask is True
+    assert "是压力上来了，还是我理解偏了？" in slip.instruction
+    assert "不要讲故事" in slip.instruction
+
+
+def test_exam_exhaustion_is_stress() -> None:
+    bot, _ = engine(score(angry=0.34, sad=0.48, neutral=0.18))
+    slip = bot.handle("s", "考研怎么办呀，已经被折磨得身心俱疲", T0)
+    assert slip.action_state == "stressed"
+    assert slip.ask is True
+
+
+def test_fear_without_fear_words_does_not_ask() -> None:
+    bot, _ = engine(score(fear=0.9, neutral=0.1))
+    slip = bot.handle("s", "外面风好大", T0)
+    assert slip.ask is False
+
+
+def test_explicit_fear_asks_without_a_story() -> None:
+    bot, _ = engine(score(fear=0.88, sad=0.12))
+    slip = bot.handle("s", "我好害怕，心跳得厉害", T0)
+    assert slip.action_state == "afraid"
+    assert "是真的怕，还是我多想了？" in slip.instruction
+    assert "不要讲故事" in slip.instruction
+
+
+def test_movie_talk_is_not_the_owners_mood() -> None:
+    bot, clf = engine(score(sad=0.9, neutral=0.1))
+    slip = bot.handle("s", "这电影的结局好难过", T0)
+    assert slip.action_state == "unclear"
+    assert slip.ask is False
+    assert clf.calls == 1
+
+
+def test_confirmation_then_story_changes_the_slip() -> None:
+    bot, clf = engine(score(sad=0.9))
+    bot.handle("s", "今天什么都不想做", T0)
+    offered = bot.handle("s", "是", T0)
+    assert "短故事" in offered.instruction
+    assert "听你说" in offered.instruction
+    assert clf.calls == 1
+    told = bot.handle("s", "讲个短故事", T0)
+    assert told.call_model is True
+    assert "短故事" in told.instruction
+    assert "不要分析情绪" in told.instruction
+    assert bot.memory("s").episodes[-1]["intervention"] == "story"
+    assert bot.memory("s").episodes[-1]["confirmed_state"] == "low"
+
+
+def test_decline_is_a_negative_label_and_returns_to_chat() -> None:
+    bot, _ = engine(score(sad=0.9, neutral=0.1))
+    bot.handle("s", "今天什么都不想做", T0)
+    slipped = bot.handle("s", "没有，我在讲电影", T0)
+    assert slipped.ask is False
+    assert "普通聊天" in slipped.instruction
+    episode = bot.memory("s").episodes[-1]
+    assert episode["pred"] == "sad"
+    assert episode["confirmed_state"] == "none"
+    assert episode["intervention"] == "ask"
+
+
+def test_anger_confirmation_listens_without_a_story() -> None:
+    bot, _ = engine(score(angry=0.9, neutral=0.1))
+    bot.handle("s", "他们太过分了", T0)
+    offered = bot.handle("s", "是的", T0)
+    assert "故事" not in offered.instruction
+    assert "听" in offered.instruction
+    heard = bot.handle("s", "你听着就行", T0)
+    assert "不要讲故事" in heard.instruction
+    assert "不要给建议" in heard.instruction
+
+
+def test_stress_confirmation_asks_the_model_to_unpack_one_thing() -> None:
+    bot, _ = engine(score(sad=0.7, angry=0.2))
+    bot.handle("s", "压力好大，忙不过来", T0)
+    bot.handle("s", "是", T0)
+    clarified = bot.handle("s", "帮我理一下", T0)
+    assert "一件" in clarified.instruction
+    assert "不要讲故事" in clarified.instruction
+    assert bot.memory("s").episodes[-1]["confirmed_state"] == "stressed"
+
+
+def test_crisis_is_not_given_to_the_model() -> None:
+    bot, clf = engine(score(sad=0.95))
+    slip = bot.handle("s", "我不想活了", T0)
+    assert slip.call_model is False
+    assert slip.direct_reply is not None
+    assert "010-82951332" in slip.direct_reply
+    assert "故事" not in slip.direct_reply
+    assert "情绪" not in slip.direct_reply
+    assert clf.calls == 0
+
+
+def test_care_waits_for_time_or_several_ordinary_turns() -> None:
+    bot, _ = engine(score(sad=0.9))
+    assert bot.handle("s", "今天什么都不想做", T0).ask is True
+    bot.handle("s", "没有", T0)
+    blocked = bot.handle("s", "还是不想动", T0 + timedelta(minutes=20))
+    assert blocked.ask is False
+    later = bot.handle("s", "还是不想动", T0 + timedelta(hours=3))
+    assert later.ask is True
+
+
+def test_many_ordinary_turns_allow_another_question() -> None:
+    bot, _ = engine(score(sad=0.9))
+    bot.handle("s", "今天什么都不想做", T0)
+    bot.handle("s", "没有", T0)
+    calm = score(neutral=0.9, happy=0.1)
+    bot.classifier = Scripted(calm)
+    for i in range(6):
+        bot.handle("s", f"我们聊第{i}件普通事", T0)
+    bot.classifier = Scripted(score(sad=0.9))
+    assert bot.handle("s", "还是不想动", T0 + timedelta(minutes=30)).ask is True
+
+
+def test_opt_out_stops_questions() -> None:
+    bot, _ = engine(score(sad=0.95))
+    bot.handle("s", "别问情绪", T0)
+    slip = bot.handle("s", "今天什么都不想做", T0)
+    assert bot.memory("s").ask_emotion is False
+    assert slip.ask is False
+
+
+def test_unrelated_reply_cancels_the_pending_question() -> None:
+    bot, _ = engine(score(sad=0.9))
+    bot.handle("s", "今天什么都不想做", T0)
+    bot.classifier = Scripted(score(neutral=0.8, happy=0.2))
+    slip = bot.handle("s", "对了晚饭吃面", T0)
+    assert bot.memory("s").pending is None
+    assert slip.ask is False
+    assert slip.action_state == "calm"
+
+
+def test_sessions_can_be_reloaded(tmp_path) -> None:
+    path = tmp_path / "state.json"
+    bot, _ = engine(score(sad=0.9))
+    bot.store_path = path
+    bot.handle("s", "今天什么都不想做", T0)
+    bot.handle("s", "没有", T0)
+    bot.save()
+    restored, _ = engine(score(neutral=1))
+    restored.store_path = path
+    restored.load()
+    assert restored.memory("s").episodes[-1]["confirmed_state"] == "none"
+
+
+def test_instruction_is_attached_beside_the_user_text() -> None:
+    class Req:
+        def __init__(self) -> None:
+            self.prompt = "答辩完了"
+            self.system_prompt = "你是大肥鱼"
+            self.extra_user_content_parts = []
+
+    req = Req()
+    attach_instruction(req, "【本轮回复纸条】\n不要改判。")
+    assert req.system_prompt == "你是大肥鱼"
+    assert req.extra_user_content_parts
+    assert "不要改判" in req.extra_user_content_parts[-1]["text"]
+    assert req.extra_user_content_parts[-1]["temporary"] is True
