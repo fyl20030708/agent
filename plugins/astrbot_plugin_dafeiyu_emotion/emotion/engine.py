@@ -31,6 +31,18 @@ STRESS_CUES = ("压力", "焦虑", "心慌", "睡不着", "忙不过来", "身�
 FEAR_CUES = ("害怕", "好怕", "吓死", "心跳")
 OPT_OUT = ("别问情绪", "不要问我情绪", "不要问情绪", "别关心我的情绪")
 CRISIS = ("不想活", "活不下去", "自杀", "想自杀", "结束自己")
+DEFAULT_SWITCH_KEYWORDS = (
+    "压力",
+    "焦虑",
+    "难过",
+    "不开心",
+    "睡不着",
+    "身心俱疲",
+    "心慌",
+    "扛不住",
+    "崩溃",
+)
+SWITCH_DECLINE_HOURS = 24
 YES = {"是", "是的", "对", "对的", "嗯", "有", "有点", "有一点", "不开心", "是啊"}
 CRISIS_REPLY = (
     "我在。这种时候我先不往下分析，也不岔开话题。"
@@ -80,6 +92,8 @@ class Memory:
     pending_pred: str | None = None
     pending_confidence: float | None = None
     last_care_at: datetime | None = None
+    last_switch_ask_at: datetime | None = None
+    switch_declined_at: datetime | None = None
     turns_since_care: int = 1_000_000
     episodes: list = field(default_factory=list)
 
@@ -91,6 +105,8 @@ class Memory:
             "pending_pred": self.pending_pred,
             "pending_confidence": self.pending_confidence,
             "last_care_at": self.last_care_at.isoformat() if self.last_care_at else None,
+            "last_switch_ask_at": self.last_switch_ask_at.isoformat() if self.last_switch_ask_at else None,
+            "switch_declined_at": self.switch_declined_at.isoformat() if self.switch_declined_at else None,
             "turns_since_care": self.turns_since_care,
             "episodes": self.episodes[-200:],
         }
@@ -98,6 +114,8 @@ class Memory:
     @classmethod
     def from_dict(cls, raw: dict) -> Memory:
         stamp = raw.get("last_care_at")
+        asked = raw.get("last_switch_ask_at")
+        declined = raw.get("switch_declined_at")
         return cls(
             ask_emotion=bool(raw.get("ask_emotion", True)),
             pending=raw.get("pending"),
@@ -105,16 +123,27 @@ class Memory:
             pending_pred=raw.get("pending_pred"),
             pending_confidence=raw.get("pending_confidence"),
             last_care_at=datetime.fromisoformat(stamp) if stamp else None,
+            last_switch_ask_at=datetime.fromisoformat(asked) if asked else None,
+            switch_declined_at=datetime.fromisoformat(declined) if declined else None,
             turns_since_care=int(raw.get("turns_since_care", 1_000_000)),
             episodes=list(raw.get("episodes") or []),
         )
 
 
 class Engine:
-    def __init__(self, classifier, min_hours: float = 3, min_turns: int = 6) -> None:
+    def __init__(
+        self,
+        classifier,
+        min_hours: float = 3,
+        min_turns: int = 6,
+        switch_keywords: tuple[str, ...] = DEFAULT_SWITCH_KEYWORDS,
+        switch_decline_hours: float = SWITCH_DECLINE_HOURS,
+    ) -> None:
         self.classifier = classifier
         self.min_hours = min_hours
         self.min_turns = min_turns
+        self.switch_keywords = switch_keywords
+        self.switch_decline_hours = switch_decline_hours
         self.memories: dict[str, Memory] = {}
         self.modes: dict[str, str] = {}
         self.store_path: Path | None = None
@@ -129,8 +158,41 @@ class Engine:
 
     def set_mode(self, session_id: str, mode: str) -> None:
         self.modes[session_id] = mode
-        if mode == "normal":
-            self.memory(session_id).pending = None
+        self.memory(session_id).pending = None
+
+    def suggest_switch(self, session_id: str, text: str, now: datetime) -> Slip | None:
+        """普通版里遇到关心词时，问一次要不要换成情绪版。"""
+        if self.mode(session_id) != "normal":
+            return None
+        memory = self.memory(session_id)
+        text = (text or "").strip()
+        if _contains_any(text, CRISIS):
+            memory.pending = None
+            return Slip("crisis", False, "", CRISIS_REPLY, False)
+        if memory.pending == "switch":
+            memory.pending = None
+            if _switch_decline(text):
+                memory.switch_declined_at = now
+                return _tone("calm", "对方选择继续普通聊天。不要再提情绪版，按普通聊天接话。")
+            return None
+        if _switch_on_cooldown(memory, now, self.min_hours, self.switch_decline_hours):
+            return None
+        if not _contains_any(text, self.switch_keywords):
+            return None
+        memory.pending = "switch"
+        memory.last_switch_ask_at = now
+        return Slip(
+            "calm",
+            True,
+            _slip(
+                [
+                    "对方还在普通版，这句话里出现了需要关心的说法。",
+                    "先接住他刚才的事，然后只问一次，不要改写：",
+                    "「要不要换成情绪版？回情绪版就换，回不用就继续这样聊。」",
+                    "不要开始分析情绪，不要讲故事。",
+                ]
+            ),
+        )
 
     def handle(self, session_id: str, text: str, now: datetime) -> Slip:
         memory = self.memory(session_id)
@@ -220,6 +282,24 @@ class Engine:
         if isinstance(score, EmotionScore):
             return score
         return EmotionScore.from_payload(score)
+
+
+def _switch_decline(text: str) -> bool:
+    stripped = text.strip()
+    if stripped in {"不用", "不要", "不用了", "不要换", "算了", "继续", "继续普通"}:
+        return True
+    return stripped.startswith(("不用", "不要换", "继续普通"))
+
+
+def _switch_on_cooldown(memory: Memory, now: datetime, min_hours: float, decline_hours: float) -> bool:
+    if memory.switch_declined_at is not None:
+        declined_hours = (now - memory.switch_declined_at).total_seconds() / 3600
+        if declined_hours < decline_hours:
+            return True
+    if memory.last_switch_ask_at is None:
+        return False
+    asked_hours = (now - memory.last_switch_ask_at).total_seconds() / 3600
+    return asked_hours < min_hours
 
 
 def _care_allowed(memory: Memory, now: datetime, min_hours: float, min_turns: int) -> bool:

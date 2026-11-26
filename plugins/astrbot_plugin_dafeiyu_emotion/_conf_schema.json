@@ -21,6 +21,11 @@
     "type": "string",
     "default": "cpu"
   },
+  "switch_keywords": {
+    "description": "普通版里出现这些词时，询问要不要换成情绪版。用逗号分隔。",
+    "type": "string",
+    "default": "压力,焦虑,难过,不开心,睡不着,身心俱疲,心慌,扛不住,崩溃"
+  },
   "min_hours": {
     "description": "两次主动关心之间至少间隔的小时数。和轮数满足一个即可再问。",
     "type": "float",

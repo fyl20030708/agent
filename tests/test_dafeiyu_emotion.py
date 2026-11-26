@@ -212,6 +212,59 @@ def test_sessions_can_be_reloaded(tmp_path) -> None:
     assert restored.memory("s").episodes[-1]["confirmed_state"] == "none"
 
 
+def test_normal_mode_keyword_asks_before_switching() -> None:
+    bot, clf = engine(score(sad=0.9))
+    slip = bot.suggest_switch("s", "最近压力好大", T0)
+    assert bot.mode("s") == "normal"
+    assert slip is not None
+    assert slip.call_model is True
+    assert "情绪版" in slip.instruction
+    assert "不用" in slip.instruction
+    assert clf.calls == 0
+
+
+def test_normal_chat_without_keywords_stays_quiet() -> None:
+    bot, _ = engine(score(sad=0.9))
+    assert bot.suggest_switch("s", "今天天气不错", T0) is None
+
+
+def test_declining_the_switch_stays_in_normal_mode() -> None:
+    bot, _ = engine(score(sad=0.9))
+    bot.suggest_switch("s", "我有点难过", T0)
+    stayed = bot.suggest_switch("s", "不用", T0)
+    assert bot.mode("s") == "normal"
+    assert stayed is not None
+    assert "普通" in stayed.instruction
+    again = bot.suggest_switch("s", "还是好焦虑", T0 + timedelta(hours=1))
+    assert again is None
+
+
+def test_switch_invite_waits_before_asking_again() -> None:
+    bot, _ = engine(score(sad=0.9))
+    assert bot.suggest_switch("s", "压力好大", T0) is not None
+    bot.suggest_switch("s", "先吃饭吧", T0)
+    assert bot.suggest_switch("s", "还是睡不着", T0 + timedelta(minutes=30)) is None
+    later = bot.suggest_switch("s", "还是睡不着", T0 + timedelta(hours=3))
+    assert later is not None
+    assert "情绪版" in later.instruction
+
+
+def test_emotion_mode_does_not_ask_to_switch() -> None:
+    bot, _ = engine(score(sad=0.9))
+    bot.set_mode("s", "emotion")
+    assert bot.suggest_switch("s", "压力好大", T0) is None
+
+
+def test_normal_mode_crisis_still_skips_the_model() -> None:
+    bot, clf = engine(score(sad=0.9))
+    slip = bot.suggest_switch("s", "我不想活了", T0)
+    assert slip is not None
+    assert slip.call_model is False
+    assert slip.direct_reply is not None
+    assert "010-82951332" in slip.direct_reply
+    assert clf.calls == 0
+
+
 def test_instruction_is_attached_beside_the_user_text() -> None:
     class Req:
         def __init__(self) -> None:

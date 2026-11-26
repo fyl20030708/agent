@@ -9,7 +9,7 @@ from astrbot.api import AstrBotConfig, logger
 from astrbot.api.event import AstrMessageEvent, filter
 from astrbot.api.star import Context, Star, register
 from emotion.debug_clf import DebugClassifier
-from emotion.engine import Engine
+from emotion.engine import DEFAULT_SWITCH_KEYWORDS, Engine
 from emotion.inject import attach_instruction
 from emotion.macbert import MacBertClassifier
 
@@ -59,15 +59,23 @@ class DaFeiYuEmotion(Star):
             yield event.plain_result("回到普通版。不再看情绪。")
             return
         if self.engine is None or self.engine.mode(session_id) != "emotion":
+            if self.engine is None:
+                return
+            if not _bot_is_listening(event):
+                return
+            slip = self.engine.suggest_switch(session_id, text, datetime.now(timezone.utc))
+            if slip is None:
+                return
+            direct = _apply_slip(self.engine, event, slip)
+            if direct:
+                yield event.plain_result(direct)
             return
-        if not (event.is_private_chat() or event.is_wake or event.is_at_or_wake_command):
+        if not _bot_is_listening(event):
             return
         slip = self.engine.handle(session_id, text, datetime.now(timezone.utc))
-        self.engine.save()
-        event.set_extra("dafeiyu_slip", slip.instruction)
-        if not slip.call_model and slip.direct_reply:
-            event.stop_event()
-            yield event.plain_result(slip.direct_reply)
+        direct = _apply_slip(self.engine, event, slip)
+        if direct:
+            yield event.plain_result(direct)
 
     @filter.on_llm_request()
     async def on_llm_request(self, event: AstrMessageEvent, req) -> None:
@@ -83,20 +91,43 @@ class DaFeiYuEmotion(Star):
         kind = str(self.config.get("classifier") or "debug").strip()
         hours = float(self.config.get("min_hours") or 3)
         turns = int(self.config.get("min_turns") or 6)
+        keywords = _switch_keywords(self.config.get("switch_keywords"))
         if kind == "debug":
-            return Engine(DebugClassifier(), min_hours=hours, min_turns=turns)
+            return Engine(DebugClassifier(), min_hours=hours, min_turns=turns, switch_keywords=keywords)
         classifier = MacBertClassifier(
             str(self.config.get("macbert_base_dir") or ""),
             str(self.config.get("macbert_checkpoint") or ""),
             str(self.config.get("macbert_device") or "cpu"),
         )
-        return Engine(classifier, min_hours=hours, min_turns=turns)
+        return Engine(classifier, min_hours=hours, min_turns=turns, switch_keywords=keywords)
 
     def _state_path(self) -> Path:
         custom = str(self.config.get("state_file") or "").strip()
         if custom:
             return Path(custom)
         return Path("data") / "plugin_data" / "astrbot_plugin_dafeiyu_emotion" / "state.json"
+
+
+def _bot_is_listening(event: AstrMessageEvent) -> bool:
+    return bool(event.is_private_chat() or event.is_wake or event.is_at_or_wake_command)
+
+
+def _apply_slip(engine: Engine, event: AstrMessageEvent, slip) -> str | None:
+    engine.save()
+    event.set_extra("dafeiyu_slip", slip.instruction)
+    if not slip.call_model and slip.direct_reply:
+        event.stop_event()
+        return slip.direct_reply
+    return None
+
+
+def _switch_keywords(raw) -> tuple[str, ...]:
+    text = str(raw or "").strip()
+    if not text:
+        return DEFAULT_SWITCH_KEYWORDS
+    parts = [item.strip() for item in text.replace("，", ",").split(",")]
+    chosen = tuple(item for item in parts if item)
+    return chosen or DEFAULT_SWITCH_KEYWORDS
 
 
 def _command(text: str) -> str:
