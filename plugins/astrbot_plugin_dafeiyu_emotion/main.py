@@ -13,7 +13,7 @@ from emotion.engine import DEFAULT_SWITCH_KEYWORDS, Engine
 from emotion.inject import attach_instruction
 from emotion.macbert import MacBertClassifier
 
-PERSONA_MARK = "【大肥鱼情绪版】回复时遵守本轮回复纸条，不要改判情绪。"
+PERSONA_MARK = "【大肥鱼情绪版】先接住对方说的内容，不诊断。回复时遵守本轮回复纸条，不要改判情绪。"
 
 
 @register("astrbot_plugin_dafeiyu_emotion", "fyl20030708", "大肥鱼情绪版", "0.1.0")

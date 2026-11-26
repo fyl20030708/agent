@@ -42,16 +42,18 @@ def test_happy_slip_keeps_the_chat_and_does_not_ask() -> None:
     assert "不要改判" in slip.instruction
 
 
-def test_sad_slip_asks_the_fixed_question_and_waits() -> None:
+def test_sad_slip_lets_the_model_choose_from_the_menu() -> None:
     bot, _ = engine(score(sad=0.86, neutral=0.14))
     slip = bot.handle("s", "答辩完了，什么都不想做", T0)
     assert slip.action_state == "low"
     assert slip.ask is True
     assert slip.call_model is True
-    assert "这几句听起来有点沉，是遇到事了，还是我多想了？" in slip.instruction
+    assert "自己选" in slip.instruction
+    assert "刚才说的内容" in slip.instruction
     assert "接住" in slip.instruction
     assert "不要讲故事" in slip.instruction
     assert "不要改判" in slip.instruction
+    assert "多想了" not in slip.instruction
 
 
 def test_low_confidence_sadness_does_not_ask() -> None:
@@ -67,7 +69,8 @@ def test_stress_slip_does_not_offer_a_story() -> None:
     slip = bot.handle("s", "最近压力好大，睡不着", T0)
     assert slip.action_state == "stressed"
     assert slip.ask is True
-    assert "是压力上来了，还是我理解偏了？" in slip.instruction
+    assert "一件" in slip.instruction
+    assert "刚才说的内容" in slip.instruction
     assert "不要讲故事" in slip.instruction
 
 
@@ -88,7 +91,8 @@ def test_explicit_fear_asks_without_a_story() -> None:
     bot, _ = engine(score(fear=0.88, sad=0.12))
     slip = bot.handle("s", "我好害怕，心跳得厉害", T0)
     assert slip.action_state == "afraid"
-    assert "是真的怕，还是我多想了？" in slip.instruction
+    assert "最怕" in slip.instruction
+    assert "刚才说的内容" in slip.instruction
     assert "不要讲故事" in slip.instruction
 
 

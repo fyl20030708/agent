@@ -10,12 +10,6 @@ from pathlib import Path
 LABELS = ("happy", "angry", "sad", "fear", "surprise", "neutral")
 CARE_STATES = ("low", "angry", "stressed", "afraid")
 ASK_AT = {"low": 0.75, "angry": 0.80, "stressed": 0.45, "afraid": 0.85}
-QUESTIONS = {
-    "low": "这几句听起来有点沉，是遇到事了，还是我多想了？",
-    "angry": "这几句有点火气。是在生气，还是我听岔了？",
-    "stressed": "听起来像是在扛事情，是压力上来了，还是我理解偏了？",
-    "afraid": "这几句像是在怕什么。是真的怕，还是我多想了？",
-}
 STATE_NAME = {
     "low": "低落",
     "angry": "生气",
@@ -423,13 +417,21 @@ def _decide_state(text: str, score: EmotionScore) -> str:
     return "unclear"
 
 
+CARE_MENUS = {
+    "low": "可选：接住并听他说、只问一个开放问题、安静陪着。他明确要故事才可以讲一个很短的。",
+    "angry": "可选：听他把火气说完、用他的原话复述他在气什么。不要劝他冷静，不要讲道理。",
+    "stressed": "可选：接住、只帮他说清眼前最压的一件事并拆成一小步。不要灌鸡汤。",
+    "afraid": "可选：先陪着、问他现在最怕的是哪一件。不要否定他的害怕。",
+}
+
+
 def _ask(state: str, score: EmotionScore) -> Slip:
     name = STATE_NAME[state]
     lines = [
         f"情绪判断：{name}（{score.pred}，置信度 {score.confidence:.2f}）。这是 MacBERT 的结果，不要改判。",
-        "先用一两句接住对方刚才说的事。",
-        f"然后只问这一句，不要改写：「{QUESTIONS[state]}」",
-        "不要讲故事，不要给建议，问完停下。",
+        "结合他刚才说的内容，自己选一种回复，这一轮只用一种。",
+        CARE_MENUS[state],
+        "不要诊断，不要一次给很多建议。他没开口要故事就不要讲故事。",
     ]
     return Slip(state, True, _slip(lines), ask=True)
 
