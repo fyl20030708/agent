@@ -9,7 +9,8 @@ from pathlib import Path
 
 LABELS = ("happy", "angry", "sad", "fear", "surprise", "neutral")
 CARE_STATES = ("low", "angry", "stressed", "afraid")
-ASK_AT = {"low": 0.75, "angry": 0.80, "stressed": 0.45, "afraid": 0.85, "wronged": 0.75}
+# 愤怒门槛按实测下调：三花那句愤怒 66.9% 时仍要进入情绪回复。
+ASK_AT = {"low": 0.75, "angry": 0.60, "stressed": 0.45, "afraid": 0.85, "wronged": 0.75}
 STATE_NAME = {
     "low": "低落",
     "angry": "生气",
@@ -318,13 +319,10 @@ class Engine:
                 return self._locked_action(memory, "story", now, log=True)
             if _wants_listen(text):
                 return self._locked_action(memory, "listen", now, log=False)
+            if "理一下" in text:
+                return self._locked_action(memory, "unpack", now, log=True)
             if _wants_stop(text):
                 return self._locked_action(memory, "stay", now, log=False)
-            if _asks_for_help(text):
-                if known_score is None:
-                    self._predict(text)
-                return self._locked_action(memory, "unpack", now, log=True)
-
         memory.turns_since_care += 1
         if _contentless(text):
             return _tone("calm", "这句没有可判断的文字。按普通聊天接话。")
@@ -344,7 +342,6 @@ class Engine:
         return _tone(state, "这句不要问情绪，顺着对方的内容聊。")
 
     def _begin_care(self, memory: Memory, state: str, score: EmotionScore, now: datetime, reset_cooldown: bool) -> Slip:
-        action = _choose_action(state, memory.recent_user[-1] if memory.recent_user else "")
         memory.pending = "care"
         memory.pending_state = state
         memory.pending_pred = score.pred
@@ -352,7 +349,10 @@ class Engine:
         if reset_cooldown:
             memory.last_care_at = now
             memory.turns_since_care = 0
-        return _action_slip(state, score, action, memory.recent_user, ask=reset_cooldown)
+        explicit = _explicit_action(state, memory.recent_user[-1] if memory.recent_user else "")
+        if explicit:
+            return _action_slip(state, score, explicit, memory.recent_user, ask=reset_cooldown)
+        return _choice_slip(state, score, memory.recent_user, ask=reset_cooldown)
 
     def _locked_action(self, memory: Memory, action: str, now: datetime, log: bool) -> Slip:
         state = memory.pending_state or "low"
@@ -462,22 +462,14 @@ ACTION_TASK = {
 }
 
 
-def _choose_action(state: str, text: str) -> str:
-    if state == "angry":
-        return "listen" if _wants_listen(text) else "reflect"
-    if state == "afraid":
-        return "stay"
-    if state == "stressed":
-        return "unpack"
-    if state == "wronged":
-        return "stay" if _wants_stop(text) else "listen"
-    if _wants_story(text):
+def _explicit_action(state: str, text: str) -> str | None:
+    if _wants_story(text) and state in {"low", "wronged"}:
         return "story"
-    if _wants_stop(text):
-        return "stay"
-    if _asks_for_help(text):
+    if _wants_listen(text):
+        return "listen"
+    if "理一下" in text:
         return "unpack"
-    return "listen"
+    return None
 
 
 COARSE_NAME = {
@@ -488,6 +480,43 @@ COARSE_NAME = {
     "surprise": "惊奇",
     "neutral": "无情绪",
 }
+
+
+CHOICE_TASK = {
+    "listen": "",
+    "angry": "结合原话自己选一种：听完并用他的原话复述他在气什么，或只接住让他说完。不要劝冷静，不要讲道理，不要讲故事，不要给建议。",
+    "low": "结合原话自己选一种：听、只问一个开放问题、或安静陪着。他没开口要故事就不要讲故事。",
+    "stressed": "结合原话自己选一种：接住，或只把最压的一件事拆一小步。不要灌鸡汤，不要讲故事。",
+    "afraid": "结合原话自己选一种：陪着，或只问最怕的那一件。不要否定他的害怕，不要讲故事。",
+    "wronged": "结合原话自己选一种：听，并用他的原话复述委屈在哪。不要讲道理，不要讲故事。",
+}
+
+
+def _runner_up(score: EmotionScore) -> tuple[str, float] | None:
+    ranked = sorted(score.probs.items(), key=lambda item: item[1], reverse=True)
+    if len(ranked) < 2 or ranked[1][1] < 0.20:
+        return None
+    return ranked[1]
+
+
+def _choice_slip(state: str, score: EmotionScore, lines: list[str], ask: bool) -> Slip:
+    quoted = "\n".join(f"- {line}" for line in lines[-4:])
+    body = [_coarse_line(score)]
+    if score.pred == "sad" and state in {"low", "stressed", "wronged"}:
+        body.append(f"细判断：{STATE_NAME[state]}。MacBERT 没有这一类，这一层看原话补充。")
+    second = _runner_up(score)
+    if second is not None:
+        name, prob = second
+        body.append(f"第二名：{COARSE_NAME.get(name, name)}（{name}，概率 {prob:.2f}）。回复时可以参考，但不能改掉粗分类。")
+    body.extend([f"要融入的原话：\n{quoted}", CHOICE_TASK[state]])
+    return Slip(state, True, _slip(body), ask=ask)
+
+
+def _coarse_line(score: EmotionScore) -> str:
+    return (
+        f"粗分类：{COARSE_NAME.get(score.pred, score.pred)}"
+        f"（{score.pred}，置信度 {score.confidence:.2f}）。不要改这个粗分类。"
+    )
 
 
 def _action_slip(state: str, score: EmotionScore, action: str, lines: list[str], ask: bool) -> Slip:
@@ -522,10 +551,6 @@ def _wants_story(text: str) -> bool:
 
 def _wants_stop(text: str) -> bool:
     return any(word in text for word in ("不想说", "别说了", "不说了"))
-
-
-def _asks_for_help(text: str) -> bool:
-    return any(word in text for word in ("怎么办", "怎么跟", "怎么做", "怎么说", "理一下", "下一步"))
 
 
 def _wants_listen(text: str) -> bool:

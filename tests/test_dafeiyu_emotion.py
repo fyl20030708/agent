@@ -48,7 +48,8 @@ def test_sad_slip_decides_to_listen_before_the_model_speaks() -> None:
     assert slip.action_state == "low"
     assert slip.ask is True
     assert slip.call_model is True
-    assert "下一步已经定为：听" in slip.instruction
+    assert "自己选" in slip.instruction
+    assert "听" in slip.instruction
     assert "什么都不想做" in slip.instruction
     assert "不要讲故事" in slip.instruction
     assert "不要改判" in slip.instruction
@@ -68,8 +69,8 @@ def test_stress_slip_does_not_offer_a_story() -> None:
     slip = bot.handle("s", "最近压力好大，睡不着", T0)
     assert slip.action_state == "stressed"
     assert slip.ask is True
-    assert "下一步已经定为：拆一小步" in slip.instruction
-    assert "一件" in slip.instruction
+    assert "自己选" in slip.instruction
+    assert "拆一小步" in slip.instruction
     assert "不要讲故事" in slip.instruction
 
 
@@ -90,7 +91,8 @@ def test_explicit_fear_asks_without_a_story() -> None:
     bot, _ = engine(score(fear=0.88, sad=0.12))
     slip = bot.handle("s", "我好害怕，心跳得厉害", T0)
     assert slip.action_state == "afraid"
-    assert "下一步已经定为：陪着" in slip.instruction
+    assert "自己选" in slip.instruction
+    assert "陪着" in slip.instruction
     assert "心跳" in slip.instruction
     assert "不要讲故事" in slip.instruction
 
@@ -106,9 +108,9 @@ def test_movie_talk_is_not_the_owners_mood() -> None:
 def test_follow_up_changes_the_next_action_and_keeps_earlier_words() -> None:
     bot, clf = engine(score(sad=0.9))
     first = bot.handle("s", "今天什么都不想做", T0)
-    assert "下一步已经定为：听" in first.instruction
+    assert "自己选" in first.instruction
     follow = bot.handle("s", "也不知道明天该怎么跟导师讲", T0)
-    assert "拆一小步" in follow.instruction
+    assert "自己选" in follow.instruction
     assert "导师" in follow.instruction
     assert "什么都不想做" in follow.instruction
     assert clf.calls == 2
@@ -135,7 +137,8 @@ def test_decline_is_a_negative_label_and_returns_to_chat() -> None:
 def test_anger_is_reflected_in_the_owners_words() -> None:
     bot, _ = engine(score(angry=0.9, neutral=0.1))
     first = bot.handle("s", "他们太过分了", T0)
-    assert "下一步已经定为：听完并复述" in first.instruction
+    assert "自己选" in first.instruction
+    assert "复述" in first.instruction
     assert "太过分了" in first.instruction
     assert "不要讲故事" in first.instruction
     heard = bot.handle("s", "你听着就行", T0)
@@ -147,6 +150,7 @@ def test_anger_is_reflected_in_the_owners_words() -> None:
 def test_stress_confirmation_asks_the_model_to_unpack_one_thing() -> None:
     bot, _ = engine(score(sad=0.7, angry=0.2))
     first = bot.handle("s", "压力好大，忙不过来", T0)
+    assert "自己选" in first.instruction
     assert "拆一小步" in first.instruction
     clarified = bot.handle("s", "帮我理一下", T0)
     assert "一件" in clarified.instruction
@@ -244,7 +248,8 @@ def test_wronged_stays_a_fine_label_and_listens() -> None:
     slip = bot.handle("s", "评委当众否定我", T0, fine_label="委屈")
     assert slip.action_state == "wronged"
     assert "细判断：委屈" in slip.instruction
-    assert "下一步已经定为：听" in slip.instruction
+    assert "自己选" in slip.instruction
+    assert "听" in slip.instruction
 
 
 def test_fine_label_cannot_override_macbert_anger() -> None:
@@ -260,6 +265,20 @@ def test_parse_fine_label_keeps_four_words() -> None:
     assert parse_fine_label("这句是有压力") == "有压力"
     assert parse_fine_label("低落") == "低落"
     assert parse_fine_label("高兴") == "说不清"
+
+
+def test_measured_anger_enters_care_and_lets_the_model_choose() -> None:
+    text = "三花我真的厌恶了，早上，老头就跟我说，今天不要出手，但是我还是鬼使神差地出手。我想试试水，结果，结果就是这么的让人心痛。"
+    bot, _ = engine(score(angry=0.6690, sad=0.3222))
+    slip = bot.handle("s", text, T0)
+    assert slip.action_state == "angry"
+    assert slip.ask is True
+    assert slip.call_model is True
+    assert "粗分类：愤怒" in slip.instruction
+    assert "第二名：悲伤" in slip.instruction
+    assert "自己选" in slip.instruction
+    assert "心痛" in slip.instruction
+    assert "下一步已经定为" not in slip.instruction
 
 
 def test_happy_word_also_asks_about_switching() -> None:

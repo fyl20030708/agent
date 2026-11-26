@@ -14,7 +14,7 @@ from emotion.inject import attach_instruction
 from emotion.macbert import MacBertClassifier
 from emotion.refine import debug_fine_label, parse_fine_label, refinement_prompt
 
-PERSONA_MARK = "【大肥鱼情绪版】先接住对方说的内容，不诊断。纸条里的下一步已经定好，只把这一步说出来，不要另选做法，也不要改判情绪。"
+PERSONA_MARK = "【大肥鱼情绪版】先接住对方说的内容，不诊断。纸条给出粗分类和原话后，由你判断这一轮怎么回，一轮只用一种做法，不要改判粗分类。"
 
 
 @register("astrbot_plugin_dafeiyu_emotion", "fyl20030708", "大肥鱼情绪版", "0.1.0")
