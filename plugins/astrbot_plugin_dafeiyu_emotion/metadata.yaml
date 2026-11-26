@@ -1,0 +1,17 @@
+name: astrbot_plugin_dafeiyu_emotion
+display_name: 大肥鱼情绪版
+desc: 普通版与情绪版可切换。情绪版用本地 MacBERT 判断情绪，回复仍走当前选中的聊天模型。
+version: v0.1.0
+author: fyl20030708
+repo: https://github.com/fyl20030708/agent
+astrbot_version: ">=4.5.7"
+category: ai_context
+support_platforms:
+  - aiocqhttp
+  - qq_official
+  - qq_official_webhook
+  - wecom
+  - wecom_ai_bot
+  - weixin_official_account
+  - weixin_oc
+  - satori

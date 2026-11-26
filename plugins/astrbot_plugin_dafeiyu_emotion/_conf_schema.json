@@ -1,0 +1,44 @@
+{
+  "classifier": {
+    "description": "情绪判断来源。macbert 使用本机权重；debug 只用关键词走通纸条，不能当真。",
+    "type": "string",
+    "options": ["macbert", "debug"],
+    "default": "debug",
+    "hint": "电脑上先用 debug 看回复是否按纸条说话。权重下好后改成 macbert。"
+  },
+  "macbert_base_dir": {
+    "description": "本机 MacBERT 基座目录，里面是 config.json 和分词器。",
+    "type": "string",
+    "default": ""
+  },
+  "macbert_checkpoint": {
+    "description": "本机情绪分类权重 best.pt。",
+    "type": "string",
+    "default": ""
+  },
+  "macbert_device": {
+    "description": "MacBERT 推理设备。",
+    "type": "string",
+    "default": "cpu"
+  },
+  "switch_keywords": {
+    "description": "普通版里出现这些词时，询问要不要换成情绪版。用逗号分隔。",
+    "type": "string",
+    "default": "开心,高兴,快乐,幸福,兴奋,喜悦,愉快,欢喜,惊喜,狂喜,欣喜,舒畅,痛快,得意,自豪,难过,伤心,悲伤,难受,痛苦,委屈,失落,失望,绝望,崩溃,郁闷,孤独,寂寞,心累,想哭,心碎,心寒,心疼,痛心,悲哀,悲痛,凄凉,落寞,消沉,压抑,空虚,厌世,灰心,不开心,心情不好,生气,愤怒,恼火,火大,窝火,来气,气愤,暴怒,发怒,害怕,恐惧,心慌,慌张,焦虑,担心,紧张,压力,不安,恐慌,后怕,睡不着,失眠,身心俱疲,扛不住,喘不过气,忙不过来,不知所措,坐立不安,烦躁,心烦,烦恼,烦闷,憋屈,窝囊,讨厌,厌恶,恶心,反感,好烦,内疚,愧疚,后悔,吃惊,震惊,吓到,惊讶,害羞,羞愧,丢脸,想念,牵挂"
+  },
+  "min_hours": {
+    "description": "两次主动关心之间至少间隔的小时数。和轮数满足一个即可再问。",
+    "type": "float",
+    "default": 3
+  },
+  "min_turns": {
+    "description": "两次主动关心之间至少间隔的普通对话轮数。",
+    "type": "int",
+    "default": 6
+  },
+  "state_file": {
+    "description": "会话开关和确认记录的保存路径。留空则写到 AstrBot 的 data/plugin_data 下。",
+    "type": "string",
+    "default": ""
+  }
+}
