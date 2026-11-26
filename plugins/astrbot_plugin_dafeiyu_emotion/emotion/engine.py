@@ -179,6 +179,7 @@ class Memory:
     last_switch_ask_at: datetime | None = None
     switch_declined_at: datetime | None = None
     turns_since_care: int = 1_000_000
+    recent_user: list = field(default_factory=list)
     episodes: list = field(default_factory=list)
 
     def to_dict(self) -> dict:
@@ -192,6 +193,7 @@ class Memory:
             "last_switch_ask_at": self.last_switch_ask_at.isoformat() if self.last_switch_ask_at else None,
             "switch_declined_at": self.switch_declined_at.isoformat() if self.switch_declined_at else None,
             "turns_since_care": self.turns_since_care,
+            "recent_user": self.recent_user[-6:],
             "episodes": self.episodes[-200:],
         }
 
@@ -210,6 +212,7 @@ class Memory:
             last_switch_ask_at=datetime.fromisoformat(asked) if asked else None,
             switch_declined_at=datetime.fromisoformat(declined) if declined else None,
             turns_since_care=int(raw.get("turns_since_care", 1_000_000)),
+            recent_user=list(raw.get("recent_user") or []),
             episodes=list(raw.get("episodes") or []),
         )
 
@@ -289,12 +292,9 @@ class Engine:
             memory.pending = None
             return _tone("unclear", "主人说过不要问情绪。这轮按普通聊天接话。")
 
-        if memory.pending == "confirm":
-            kind = _reply_kind(text)
-            if kind == "yes":
-                memory.pending = "choice"
-                return _offer(memory.pending_state or "low")
-            if kind == "no":
+        _remember(memory, text)
+        if memory.pending == "care":
+            if _reply_kind(text) == "no":
                 memory.episodes.append(
                     {
                         "text": text,
@@ -306,43 +306,58 @@ class Engine:
                 memory.pending = None
                 memory.turns_since_care += 1
                 return _tone("unclear", "对方否认了刚才的情绪判断。按普通聊天接他现在的话。")
-            memory.pending = None
-
-        if memory.pending == "choice":
-            choice = _parse_choice(text, memory.pending_state or "")
-            if choice:
-                state = memory.pending_state or "low"
-                memory.episodes.append(
-                    {
-                        "text": text,
-                        "pred": memory.pending_pred,
-                        "confirmed_state": state,
-                        "intervention": choice,
-                    }
-                )
-                memory.pending = None
-                memory.turns_since_care += 1
-                return _after_choice(state, choice)
-            memory.pending = None
+            if _wants_story(text) and memory.pending_state == "low":
+                return self._locked_action(memory, "story", now, log=True)
+            if _wants_listen(text):
+                return self._locked_action(memory, "listen", now, log=False)
+            if _wants_stop(text):
+                return self._locked_action(memory, "stay", now, log=False)
+            if _asks_for_help(text):
+                self._predict(text)
+                return self._locked_action(memory, "unpack", now, log=True)
 
         memory.turns_since_care += 1
         if _contentless(text):
             return _tone("calm", "这句没有可判断的文字。按普通聊天接话。")
         if _contains_any(text, MEDIA_CUES):
             self._predict(text)
+            memory.pending = None
             return _tone("unclear", "这句像是在说电影或剧情，不要当成主人此刻的心情。")
 
         score = self._predict(text)
         state = _decide_state(text, score)
+        if memory.pending == "care" and state in ASK_AT:
+            return self._begin_care(memory, state, score, now, reset_cooldown=False)
         if state in ASK_AT and score.confidence >= ASK_AT[state] and _care_allowed(memory, now, self.min_hours, self.min_turns):
-            memory.pending = "confirm"
-            memory.pending_state = state
-            memory.pending_pred = score.pred
-            memory.pending_confidence = score.confidence
+            return self._begin_care(memory, state, score, now, reset_cooldown=True)
+        memory.pending = None
+        return _tone(state, "这句不要问情绪，顺着对方的内容聊。")
+
+    def _begin_care(self, memory: Memory, state: str, score: EmotionScore, now: datetime, reset_cooldown: bool) -> Slip:
+        action = _choose_action(state, memory.recent_user[-1] if memory.recent_user else "")
+        memory.pending = "care"
+        memory.pending_state = state
+        memory.pending_pred = score.pred
+        memory.pending_confidence = score.confidence
+        if reset_cooldown:
             memory.last_care_at = now
             memory.turns_since_care = 0
-            return _ask(state, score)
-        return _tone(state, "这句不要问情绪，顺着对方的内容聊。")
+        return _action_slip(state, score, action, memory.recent_user, ask=reset_cooldown)
+
+    def _locked_action(self, memory: Memory, action: str, now: datetime, log: bool) -> Slip:
+        state = memory.pending_state or "low"
+        score = EmotionScore(memory.pending_pred or "sad", {}, memory.pending_confidence or 0.0)
+        if log:
+            memory.episodes.append(
+                {
+                    "text": memory.recent_user[-1] if memory.recent_user else "",
+                    "pred": memory.pending_pred,
+                    "confirmed_state": state,
+                    "intervention": action,
+                }
+            )
+        memory.last_care_at = now
+        return _action_slip(state, score, action, memory.recent_user, ask=False)
 
     def save(self) -> None:
         if self.store_path is None:
@@ -417,45 +432,62 @@ def _decide_state(text: str, score: EmotionScore) -> str:
     return "unclear"
 
 
-CARE_MENUS = {
-    "low": "可选：接住并听他说、只问一个开放问题、安静陪着。他明确要故事才可以讲一个很短的。",
-    "angry": "可选：听他把火气说完、用他的原话复述他在气什么。不要劝他冷静，不要讲道理。",
-    "stressed": "可选：接住、只帮他说清眼前最压的一件事并拆成一小步。不要灌鸡汤。",
-    "afraid": "可选：先陪着、问他现在最怕的是哪一件。不要否定他的害怕。",
+ACTION_TASK = {
+    "listen": "下一步已经定为：听。只用他的原话接住这些内容，让他继续说。不要给建议，不要讲故事，不要改成别的做法。",
+    "unpack": "下一步已经定为：拆一小步。只帮他把原话里最压的一件事收成下一步能做的一小步，别的不展开。不要讲故事。",
+    "stay": "下一步已经定为：陪着。轻轻接住原话，留在这儿。不要追问，不要建议，不要讲故事。",
+    "reflect": "下一步已经定为：听完并复述。用他的原话复述他在气什么。不要劝他冷静，不要讲道理，不要讲故事，不要给建议。",
+    "story": "下一步已经定为：讲一个短故事。故事要接上他刚才说的事，讲完停下。不要分析情绪，不要说教。",
 }
 
 
-def _ask(state: str, score: EmotionScore) -> Slip:
-    name = STATE_NAME[state]
-    lines = [
-        f"情绪判断：{name}（{score.pred}，置信度 {score.confidence:.2f}）。这是 MacBERT 的结果，不要改判。",
-        "结合他刚才说的内容，自己选一种回复，这一轮只用一种。",
-        CARE_MENUS[state],
-        "不要诊断，不要一次给很多建议。他没开口要故事就不要讲故事。",
+def _choose_action(state: str, text: str) -> str:
+    if state == "angry":
+        return "listen" if _wants_listen(text) else "reflect"
+    if state == "afraid":
+        return "stay"
+    if state == "stressed":
+        return "unpack"
+    if _wants_story(text):
+        return "story"
+    if _wants_stop(text):
+        return "stay"
+    if _asks_for_help(text):
+        return "unpack"
+    return "listen"
+
+
+def _action_slip(state: str, score: EmotionScore, action: str, lines: list[str], ask: bool) -> Slip:
+    quoted = "\n".join(f"- {line}" for line in lines[-4:])
+    body = [
+        f"情绪判断：{STATE_NAME[state]}（{score.pred}，置信度 {score.confidence:.2f}）。这是 MacBERT 的结果，不要改判。",
+        f"要融入的原话：\n{quoted}",
+        ACTION_TASK[action],
     ]
-    return Slip(state, True, _slip(lines), ask=True)
+    return Slip(state, True, _slip(body), ask=ask)
 
 
-def _offer(state: str) -> Slip:
-    if state == "low":
-        body = "请他选一个：听你说、讲个短故事，或者就这样待着。等他选，不要直接讲故事，不要给建议。"
-    elif state == "stressed":
-        body = "问他要不要把眼前的事理一下，或只是听着。不要讲故事。"
-    else:
-        body = "告诉他你听着，他可以接着说。不要给建议。"
-    return Slip(state, True, _slip([f"对方确认自己{STATE_NAME.get(state, '有情绪')}。不要改判。", body]), ask=False)
+def _remember(memory: Memory, text: str) -> None:
+    if not text:
+        return
+    memory.recent_user.append(text)
+    del memory.recent_user[:-6]
 
 
-def _after_choice(state: str, choice: str) -> Slip:
-    if choice == "story":
-        text = "对方确认自己有点低落，并选择听一个短故事。讲一个很短的故事陪他，讲完停下。不要分析情绪，不要说教。"
-    elif choice == "clarify":
-        text = "对方选择把事情理一下。不要改判，不要讲故事。只帮他说清眼前这一件最压着的事，不要展开成建议清单。"
-    elif choice == "stay":
-        text = "对方希望就这样待着。不要再问，轻轻接一句。不要讲故事。"
-    else:
-        text = "对方选择让你听着。不要改判。接一句，让他继续说。不要给建议，不要讲故事。"
-    return Slip(state, True, _slip([text]), ask=False)
+def _wants_story(text: str) -> bool:
+    return "故事" in text
+
+
+def _wants_stop(text: str) -> bool:
+    return any(word in text for word in ("不想说", "别说了", "不说了"))
+
+
+def _asks_for_help(text: str) -> bool:
+    return any(word in text for word in ("怎么办", "怎么跟", "怎么做", "怎么说", "理一下", "下一步"))
+
+
+def _wants_listen(text: str) -> bool:
+    return any(word in text for word in ("听着", "你听", "听我说"))
 
 
 def _tone(state: str, sentence: str) -> Slip:
@@ -475,22 +507,6 @@ def _reply_kind(text: str) -> str:
     if stripped in YES:
         return "yes"
     return "other"
-
-
-def _parse_choice(text: str, state: str) -> str | None:
-    if "故事" in text and state == "low":
-        return "story"
-    if "理" in text and state == "stressed":
-        return "clarify"
-    if "就这样" in text or stripped_stay(text):
-        return "stay"
-    if "听" in text:
-        return "listen"
-    return None
-
-
-def stripped_stay(text: str) -> bool:
-    return text.strip() in {"不用", "算了", "待着", "就这样"}
 
 
 def _contains_any(text: str, words: tuple[str, ...]) -> bool:
