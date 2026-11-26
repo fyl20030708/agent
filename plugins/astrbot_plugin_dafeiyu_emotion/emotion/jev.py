@@ -49,6 +49,7 @@ def apply_jev(instruction: str, choices: list[dict[str, str]]) -> str:
     replacement = (
         f"{format_jev(choices)}\n"
         "根据上面的 JEV 选择和原话回复。一轮只用其中一个选择。不要改粗分类。"
+        "情绪的主语用主人，沿用原话的说法。原话是厌恶三花，就写主人厌恶三花，不要写成厌恶对着三花。"
     )
     if DECIDE_LINE in instruction:
         return instruction.replace(DECIDE_LINE, replacement)

@@ -285,6 +285,7 @@ def test_program_outputs_model_jev_before_the_reply() -> None:
     rewritten = apply_jev(slip.instruction, choices)
     assert "JEV 选择：" in rewritten
     assert "心痛" in rewritten
+    assert "主人厌恶三花" in rewritten
     assert "请你判断这一轮该做什么" not in rewritten
 
 
