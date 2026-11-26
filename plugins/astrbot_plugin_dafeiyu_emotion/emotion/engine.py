@@ -482,14 +482,7 @@ COARSE_NAME = {
 }
 
 
-CHOICE_TASK = {
-    "listen": "",
-    "angry": "结合原话自己选一种：听完并用他的原话复述他在气什么，或只接住让他说完。不要劝冷静，不要讲道理，不要讲故事，不要给建议。",
-    "low": "结合原话自己选一种：听、只问一个开放问题、或安静陪着。他没开口要故事就不要讲故事。",
-    "stressed": "结合原话自己选一种：接住，或只把最压的一件事拆一小步。不要灌鸡汤，不要讲故事。",
-    "afraid": "结合原话自己选一种：陪着，或只问最怕的那一件。不要否定他的害怕，不要讲故事。",
-    "wronged": "结合原话自己选一种：听，并用他的原话复述委屈在哪。不要讲道理，不要讲故事。",
-}
+DECIDE_LINE = "请你判断这一轮该做什么，并直接回复。做法要贴着原话，一轮只做一件事。不要改粗分类。"
 
 
 def _runner_up(score: EmotionScore) -> tuple[str, float] | None:
@@ -508,7 +501,7 @@ def _choice_slip(state: str, score: EmotionScore, lines: list[str], ask: bool) -
     if second is not None:
         name, prob = second
         body.append(f"第二名：{COARSE_NAME.get(name, name)}（{name}，概率 {prob:.2f}）。回复时可以参考，但不能改掉粗分类。")
-    body.extend([f"要融入的原话：\n{quoted}", CHOICE_TASK[state]])
+    body.extend([f"要融入的原话：\n{quoted}", DECIDE_LINE])
     return Slip(state, True, _slip(body), ask=ask)
 
 
