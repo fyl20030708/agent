@@ -229,6 +229,39 @@ def test_normal_mode_keyword_asks_before_switching() -> None:
     assert clf.calls == 0
 
 
+def test_chat_model_names_pressure_inside_macbert_sadness() -> None:
+    bot, clf = engine(score(sad=0.86, neutral=0.14))
+    slip = bot.handle("s", "答辩完了，什么都不想做", T0, fine_label="有压力")
+    assert slip.action_state == "stressed"
+    assert "粗分类：悲伤" in slip.instruction
+    assert "细判断：有压力" in slip.instruction
+    assert "拆一小步" in slip.instruction
+    assert clf.calls == 1
+
+
+def test_wronged_stays_a_fine_label_and_listens() -> None:
+    bot, _ = engine(score(sad=0.8, neutral=0.2))
+    slip = bot.handle("s", "评委当众否定我", T0, fine_label="委屈")
+    assert slip.action_state == "wronged"
+    assert "细判断：委屈" in slip.instruction
+    assert "下一步已经定为：听" in slip.instruction
+
+
+def test_fine_label_cannot_override_macbert_anger() -> None:
+    bot, _ = engine(score(angry=0.9, neutral=0.1))
+    slip = bot.handle("s", "他们太过分了", T0, fine_label="低落")
+    assert slip.action_state == "angry"
+    assert "细判断" not in slip.instruction
+
+
+def test_parse_fine_label_keeps_four_words() -> None:
+    from emotion.refine import parse_fine_label
+
+    assert parse_fine_label("这句是有压力") == "有压力"
+    assert parse_fine_label("低落") == "低落"
+    assert parse_fine_label("高兴") == "说不清"
+
+
 def test_happy_word_also_asks_about_switching() -> None:
     bot, _ = engine(score(sad=0.9))
     slip = bot.suggest_switch("s", "今天好开心", T0)

@@ -12,6 +12,7 @@ from emotion.debug_clf import DebugClassifier
 from emotion.engine import DEFAULT_SWITCH_KEYWORDS, Engine
 from emotion.inject import attach_instruction
 from emotion.macbert import MacBertClassifier
+from emotion.refine import debug_fine_label, parse_fine_label, refinement_prompt
 
 PERSONA_MARK = "【大肥鱼情绪版】先接住对方说的内容，不诊断。纸条里的下一步已经定好，只把这一步说出来，不要另选做法，也不要改判情绪。"
 
@@ -72,7 +73,14 @@ class DaFeiYuEmotion(Star):
             return
         if not _bot_is_listening(event):
             return
-        slip = self.engine.handle(session_id, text, datetime.now(timezone.utc))
+        fine_label, known_score = await self._sad_fine_label(event, session_id, text)
+        slip = self.engine.handle(
+            session_id,
+            text,
+            datetime.now(timezone.utc),
+            fine_label=fine_label,
+            known_score=known_score,
+        )
         direct = _apply_slip(self.engine, event, slip)
         if direct:
             yield event.plain_result(direct)
@@ -86,6 +94,33 @@ class DaFeiYuEmotion(Star):
         if PERSONA_MARK not in system_prompt:
             req.system_prompt = f"{system_prompt}\n{PERSONA_MARK}".strip()
         attach_instruction(req, instruction)
+
+    async def _sad_fine_label(self, event: AstrMessageEvent, session_id: str, text: str):
+        if self.engine is None or not text.strip():
+            return None, None
+        try:
+            score = self.engine.classify(text)
+        except Exception as exc:  # noqa: BLE001
+            logger.error("情绪粗分类失败：%s", exc)
+            return None, None
+        if score.pred != "sad":
+            return None, score
+        if str(self.config.get("classifier") or "debug").strip() == "debug":
+            return debug_fine_label(text), score
+        try:
+            provider = await self.context.get_using_provider_async(umo=event.unified_msg_origin)
+            if provider is None:
+                return None, score
+            history = list(self.engine.memory(session_id).recent_user)
+            response = await provider.text_chat(
+                prompt=refinement_prompt(text, history),
+                system_prompt="你只输出低落、有压力、委屈、说不清之一。",
+            )
+            raw = _completion_text(response)
+            return parse_fine_label(raw), score
+        except Exception as exc:  # noqa: BLE001
+            logger.error("悲伤的细判断失败，改用原话规则：%s", exc)
+            return None, score
 
     def _build_engine(self) -> Engine:
         kind = str(self.config.get("classifier") or "debug").strip()
@@ -106,6 +141,14 @@ class DaFeiYuEmotion(Star):
         if custom:
             return Path(custom)
         return Path("data") / "plugin_data" / "astrbot_plugin_dafeiyu_emotion" / "state.json"
+
+
+def _completion_text(response) -> str:
+    for name in ("completion_text", "result_text", "text"):
+        value = getattr(response, name, None)
+        if isinstance(value, str):
+            return value
+    return str(response or "")
 
 
 def _bot_is_listening(event: AstrMessageEvent) -> bool:

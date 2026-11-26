@@ -9,12 +9,13 @@ from pathlib import Path
 
 LABELS = ("happy", "angry", "sad", "fear", "surprise", "neutral")
 CARE_STATES = ("low", "angry", "stressed", "afraid")
-ASK_AT = {"low": 0.75, "angry": 0.80, "stressed": 0.45, "afraid": 0.85}
+ASK_AT = {"low": 0.75, "angry": 0.80, "stressed": 0.45, "afraid": 0.85, "wronged": 0.75}
 STATE_NAME = {
     "low": "低落",
     "angry": "生气",
     "stressed": "有压力",
     "afraid": "害怕",
+    "wronged": "委屈",
     "pleasant": "高兴",
     "calm": "平静",
     "unclear": "说不清",
@@ -281,7 +282,14 @@ class Engine:
             ),
         )
 
-    def handle(self, session_id: str, text: str, now: datetime) -> Slip:
+    def handle(
+        self,
+        session_id: str,
+        text: str,
+        now: datetime,
+        fine_label: str | None = None,
+        known_score: EmotionScore | None = None,
+    ) -> Slip:
         memory = self.memory(session_id)
         text = (text or "").strip()
         if _contains_any(text, CRISIS):
@@ -306,26 +314,28 @@ class Engine:
                 memory.pending = None
                 memory.turns_since_care += 1
                 return _tone("unclear", "对方否认了刚才的情绪判断。按普通聊天接他现在的话。")
-            if _wants_story(text) and memory.pending_state == "low":
+            if _wants_story(text) and memory.pending_state in {"low", "wronged"}:
                 return self._locked_action(memory, "story", now, log=True)
             if _wants_listen(text):
                 return self._locked_action(memory, "listen", now, log=False)
             if _wants_stop(text):
                 return self._locked_action(memory, "stay", now, log=False)
             if _asks_for_help(text):
-                self._predict(text)
+                if known_score is None:
+                    self._predict(text)
                 return self._locked_action(memory, "unpack", now, log=True)
 
         memory.turns_since_care += 1
         if _contentless(text):
             return _tone("calm", "这句没有可判断的文字。按普通聊天接话。")
         if _contains_any(text, MEDIA_CUES):
-            self._predict(text)
+            if known_score is None:
+                self._predict(text)
             memory.pending = None
             return _tone("unclear", "这句像是在说电影或剧情，不要当成主人此刻的心情。")
 
-        score = self._predict(text)
-        state = _decide_state(text, score)
+        score = known_score if known_score is not None else self._predict(text)
+        state = _decide_state(text, score, fine_label)
         if memory.pending == "care" and state in ASK_AT:
             return self._begin_care(memory, state, score, now, reset_cooldown=False)
         if state in ASK_AT and score.confidence >= ASK_AT[state] and _care_allowed(memory, now, self.min_hours, self.min_turns):
@@ -376,6 +386,9 @@ class Engine:
         self.modes = dict(raw.get("modes") or {})
         self.memories = {key: Memory.from_dict(value) for key, value in (raw.get("sessions") or {}).items()}
 
+    def classify(self, text: str) -> EmotionScore:
+        return self._predict(text)
+
     def _predict(self, text: str) -> EmotionScore:
         score = self.classifier.predict(text)
         if isinstance(score, EmotionScore):
@@ -410,7 +423,15 @@ def _care_allowed(memory: Memory, now: datetime, min_hours: float, min_turns: in
     return hours >= min_hours or memory.turns_since_care >= min_turns
 
 
-def _decide_state(text: str, score: EmotionScore) -> str:
+def _decide_state(text: str, score: EmotionScore, fine_label: str | None = None) -> str:
+    if score.pred == "sad" and fine_label in {"低落", "有压力", "委屈", "说不清"}:
+        if fine_label == "有压力":
+            return "stressed"
+        if fine_label == "委屈":
+            return "wronged"
+        if fine_label == "低落":
+            return "low"
+        return "low" if score.confidence >= ASK_AT["low"] else "unclear"
     if _contains_any(text, STRESS_CUES) and not (score.pred == "happy" and score.confidence >= 0.7):
         negative = score.probs.get("sad", 0) + score.probs.get("angry", 0) + score.probs.get("fear", 0)
         if score.pred in {"sad", "angry", "fear"} and score.confidence >= 0.45:
@@ -448,6 +469,8 @@ def _choose_action(state: str, text: str) -> str:
         return "stay"
     if state == "stressed":
         return "unpack"
+    if state == "wronged":
+        return "stay" if _wants_stop(text) else "listen"
     if _wants_story(text):
         return "story"
     if _wants_stop(text):
@@ -457,13 +480,32 @@ def _choose_action(state: str, text: str) -> str:
     return "listen"
 
 
+COARSE_NAME = {
+    "happy": "高兴",
+    "angry": "愤怒",
+    "sad": "悲伤",
+    "fear": "恐惧",
+    "surprise": "惊奇",
+    "neutral": "无情绪",
+}
+
+
 def _action_slip(state: str, score: EmotionScore, action: str, lines: list[str], ask: bool) -> Slip:
     quoted = "\n".join(f"- {line}" for line in lines[-4:])
     body = [
-        f"情绪判断：{STATE_NAME[state]}（{score.pred}，置信度 {score.confidence:.2f}）。这是 MacBERT 的结果，不要改判。",
-        f"要融入的原话：\n{quoted}",
-        ACTION_TASK[action],
+        (
+            f"粗分类：{COARSE_NAME.get(score.pred, score.pred)}"
+            f"（{score.pred}，置信度 {score.confidence:.2f}）。不要改这个粗分类。"
+        ),
     ]
+    if score.pred == "sad" and state in {"low", "stressed", "wronged"}:
+        body.append(f"细判断：{STATE_NAME[state]}。MacBERT 没有这一类，这一层看原话补充。")
+    body.extend(
+        [
+            f"要融入的原话：\n{quoted}",
+            ACTION_TASK[action],
+        ]
+    )
     return Slip(state, True, _slip(body), ask=ask)
 
 
