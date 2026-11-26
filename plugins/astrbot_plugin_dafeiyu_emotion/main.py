@@ -11,6 +11,7 @@ from astrbot.api.star import Context, Star, register
 from emotion.debug_clf import DebugClassifier
 from emotion.engine import DEFAULT_SWITCH_KEYWORDS, Engine
 from emotion.inject import attach_instruction
+from emotion.jev import apply_jev, jev_request, parse_jev
 from emotion.macbert import MacBertClassifier
 from emotion.refine import debug_fine_label, parse_fine_label, refinement_prompt
 
@@ -81,6 +82,7 @@ class DaFeiYuEmotion(Star):
             fine_label=fine_label,
             known_score=known_score,
         )
+        slip = await self._fill_jev(event, slip)
         direct = _apply_slip(self.engine, event, slip)
         if direct:
             yield event.plain_result(direct)
@@ -94,6 +96,27 @@ class DaFeiYuEmotion(Star):
         if PERSONA_MARK not in system_prompt:
             req.system_prompt = f"{system_prompt}\n{PERSONA_MARK}".strip()
         attach_instruction(req, instruction)
+
+    async def _fill_jev(self, event: AstrMessageEvent, slip):
+        if not slip.ask or not slip.call_model:
+            return slip
+        try:
+            provider = await self.context.get_using_provider_async(umo=event.unified_msg_origin)
+            if provider is None:
+                return slip
+            response = await provider.text_chat(
+                prompt=jev_request(slip.instruction),
+                system_prompt="你只输出 JEV 的 JSON，不写给主人的回复。",
+            )
+            choices = parse_jev(_completion_text(response))
+        except Exception as exc:  # noqa: BLE001
+            logger.error("JEV 没有解析出来：%s", exc)
+            return slip
+        if not choices:
+            return slip
+        event.set_extra("dafeiyu_jev", choices)
+        slip.instruction = apply_jev(slip.instruction, choices)
+        return slip
 
     async def _sad_fine_label(self, event: AstrMessageEvent, session_id: str, text: str):
         if self.engine is None or not text.strip():

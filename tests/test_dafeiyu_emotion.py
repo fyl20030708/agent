@@ -263,6 +263,31 @@ def test_parse_fine_label_keeps_four_words() -> None:
     assert parse_fine_label("高兴") == "说不清"
 
 
+def test_program_outputs_model_jev_before_the_reply() -> None:
+    from emotion.jev import apply_jev, parse_jev
+
+    bot, _ = engine(score(angry=0.6690, sad=0.3222))
+    text = "三花我真的厌恶了，早上，老头就跟我说，今天不要出手，但是我还是鬼使神差地出手。我想试试水，结果，结果就是这么的让人心痛。"
+    slip = bot.handle("s", text, T0)
+    raw = """
+    {"choices":[
+      {"do":"点出厌恶三花，以及没听老头还是出手了","because":"粗分类是愤怒，原话有厌恶和出手"},
+      {"do":"只停在结果心痛上","because":"第二名是悲伤，原话收在心痛"},
+      {"do":"只问先说厌恶还是先说心痛","because":"愤怒和心痛都在，还没要办法"}
+    ]}
+    """
+    choices = parse_jev(raw)
+    assert [item["do"] for item in choices] == [
+        "点出厌恶三花，以及没听老头还是出手了",
+        "只停在结果心痛上",
+        "只问先说厌恶还是先说心痛",
+    ]
+    rewritten = apply_jev(slip.instruction, choices)
+    assert "JEV 选择：" in rewritten
+    assert "心痛" in rewritten
+    assert "请你判断这一轮该做什么" not in rewritten
+
+
 def test_measured_anger_enters_care_and_lets_the_model_choose() -> None:
     text = "三花我真的厌恶了，早上，老头就跟我说，今天不要出手，但是我还是鬼使神差地出手。我想试试水，结果，结果就是这么的让人心痛。"
     bot, _ = engine(score(angry=0.6690, sad=0.3222))
