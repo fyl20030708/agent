@@ -223,6 +223,14 @@ def test_normal_mode_keyword_asks_before_switching() -> None:
     assert clf.calls == 0
 
 
+def test_happy_word_also_asks_about_switching() -> None:
+    bot, _ = engine(score(sad=0.9))
+    slip = bot.suggest_switch("s", "今天好开心", T0)
+    assert slip is not None
+    assert "情绪版" in slip.instruction
+    assert bot.mode("s") == "normal"
+
+
 def test_normal_chat_without_keywords_stays_quiet() -> None:
     bot, _ = engine(score(sad=0.9))
     assert bot.suggest_switch("s", "今天天气不错", T0) is None
